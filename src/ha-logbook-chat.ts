@@ -651,6 +651,11 @@ export class HaLogbookChat extends LitElement {
       }
 
       this._inputText = '';
+
+      // Refresh messages after a short delay to pick up the sent message
+      // The logbook API may not reflect the new entry immediately
+      setTimeout(() => this._store.refresh(), 1500);
+      setTimeout(() => this._store.refresh(), 4000);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[ha-logbook-chat] Send failed:', err);
@@ -666,9 +671,12 @@ export class HaLogbookChat extends LitElement {
    * the card's current resolved view. This ensures send_ui_message targets
    * the correct recipient rather than whatever the select entities happen
    * to be set to externally.
+   *
+   * Matches by channel index (N) or contact prefix in option strings rather
+   * than label comparison, since resolved labels may differ from select options.
    */
   private async _syncRecipientSelects(): Promise<void> {
-    if (!this.hass || !this._resolved.recipientType) return;
+    if (!this.hass || !this._resolved.recipientType || !this._resolved.entityId) return;
 
     // Sync recipient type select
     if (this._config.recipient_type_entity) {
@@ -682,38 +690,54 @@ export class HaLogbookChat extends LitElement {
       }
     }
 
-    // Sync channel or contact select to match the card's current selection
+    // Sync channel or contact select based on the resolved entity ID
     if (this._resolved.recipientType === 'channel' && this._config.channel_entity) {
-      const channelSelect = this.hass.states[this._config.channel_entity];
-      if (channelSelect) {
-        // Find the option that matches the card's current label/view
-        const currentOption = channelSelect.state;
-        const targetLabel = this._resolved.label;
-        if (currentOption !== targetLabel) {
-          // Match by label in the options list
-          const options = (channelSelect.attributes['options'] as string[]) ?? [];
-          const match = options.find((opt) => opt === targetLabel);
-          if (match) {
-            await this.hass.callService('select', 'select_option', {
-              entity_id: this._config.channel_entity,
-              option: match,
+      // Extract channel index from the resolved entity_id (e.g., binary_sensor.*_ch_1_messages → 1)
+      const chMatch = this._resolved.entityId.match(/_ch_(\d+)_messages$/);
+      if (chMatch) {
+        const targetIdx = parseInt(chMatch[1], 10);
+        const channelSelect = this.hass.states[this._config.channel_entity];
+        if (channelSelect) {
+          // Check if already pointing to the right channel by checking channel_idx attribute
+          const currentIdx = channelSelect.attributes['channel_idx'] as number | undefined;
+          if (currentIdx !== targetIdx) {
+            // Find the option containing "(N)" for the target channel index
+            const options = (channelSelect.attributes['options'] as string[]) ?? [];
+            const match = options.find((opt) => {
+              const m = opt.match(/\((\d+)\)\s*$/);
+              return m && parseInt(m[1], 10) === targetIdx;
             });
+            if (match) {
+              await this.hass.callService('select', 'select_option', {
+                entity_id: this._config.channel_entity,
+                option: match,
+              });
+            }
           }
         }
       }
     } else if (this._resolved.recipientType === 'contact' && this._config.contact_entity) {
-      const contactSelect = this.hass.states[this._config.contact_entity];
-      if (contactSelect) {
-        const currentOption = contactSelect.state;
-        const targetLabel = this._resolved.label;
-        if (currentOption !== targetLabel) {
-          const options = (contactSelect.attributes['options'] as string[]) ?? [];
-          const match = options.find((opt) => opt === targetLabel);
-          if (match) {
-            await this.hass.callService('select', 'select_option', {
-              entity_id: this._config.contact_entity,
-              option: match,
+      // Extract contact prefix from the resolved entity_id (e.g., binary_sensor.*_ce7a01_messages → ce7a01)
+      const ctMatch = this._resolved.entityId.match(/_([0-9a-f]{6,})_messages$/i);
+      if (ctMatch) {
+        const targetPrefix = ctMatch[1];
+        const contactSelect = this.hass.states[this._config.contact_entity];
+        if (contactSelect) {
+          // Check if already pointing to the right contact
+          const currentPrefix = contactSelect.attributes['public_key_prefix'] as string | undefined;
+          if (!currentPrefix || !currentPrefix.startsWith(targetPrefix)) {
+            // Find the option containing the target prefix
+            const options = (contactSelect.attributes['options'] as string[]) ?? [];
+            const match = options.find((opt) => {
+              const m = opt.match(/\(([0-9a-f]{6,})\)\s*$/i);
+              return m && m[1].startsWith(targetPrefix);
             });
+            if (match) {
+              await this.hass.callService('select', 'select_option', {
+                entity_id: this._config.contact_entity,
+                option: match,
+              });
+            }
           }
         }
       }

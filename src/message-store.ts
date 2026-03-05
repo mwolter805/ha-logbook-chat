@@ -192,22 +192,26 @@ export class MessageStore {
   private _startUpdates(entityId: string): void {
     const mode = this._config.update_mode ?? 'auto';
 
-    if (mode === 'polling') {
-      this._startPolling(entityId);
-      return;
-    }
+    // Always start polling — the logbook API is the only reliable source for
+    // new messages. WebSocket state_changed events only fire when the
+    // binary_sensor toggles (Active/Inactive), not on each new logbook entry.
+    this._startPolling(entityId);
 
-    // Try WebSocket first (auto or websocket mode)
-    this._subscribeWebSocket(entityId).catch(() => {
-      if (mode === 'auto') {
-        console.info('[ha-logbook-chat] WebSocket subscription failed, falling back to polling');
-        this._startPolling(entityId);
-      }
-    });
+    // Additionally subscribe to WebSocket for instant updates on state changes
+    // and custom event types (provides faster updates when the entity does toggle)
+    if (mode !== 'polling') {
+      this._subscribeWebSocket(entityId).catch(() => {
+        if (mode === 'auto') {
+          console.info('[ha-logbook-chat] WebSocket subscription failed, polling is active');
+        }
+      });
+    }
   }
 
   /**
    * Subscribe to state_changed events via WebSocket.
+   * This catches entity state toggles (Active/Inactive) for immediate refresh.
+   * Polling handles new logbook entries that don't trigger state changes.
    */
   private async _subscribeWebSocket(entityId: string): Promise<void> {
     if (!this._hass) return;
@@ -242,9 +246,10 @@ export class MessageStore {
 
   /**
    * Start polling for updates at a regular interval.
+   * Default 10s for responsive chat experience.
    */
   private _startPolling(entityId: string): void {
-    const interval = (this._config.refresh_interval ?? 30) * 1000;
+    const interval = (this._config.refresh_interval ?? 10) * 1000;
 
     this._pollTimer = setInterval(() => {
       if (this._retryCount >= FETCH_MAX_RETRIES) {

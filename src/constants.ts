@@ -35,7 +35,7 @@ export const DEFAULT_CONFIG: Partial<CardConfig> = {
   show_input: false,
   send_mode: 'service',
   update_mode: 'auto',
-  refresh_interval: 30,
+  refresh_interval: 10,
   enable_cache: true,
   cache_ttl: 86400,
   cache_max_size: 5242880,
