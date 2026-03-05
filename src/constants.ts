@@ -100,6 +100,7 @@ export const KNOWN_CONFIG_KEYS = new Set<string>([
   'cache_max_size',
   'max_height',
   'bubble_max_width',
+  'card_mod',
 ]);
 
 /**
@@ -113,3 +114,23 @@ export const ENTITY_SWITCH_DEBOUNCE_MS = 300;
 export const FETCH_RETRY_BASE_MS = 1000;
 export const FETCH_RETRY_MAX_MS = 30000;
 export const FETCH_MAX_RETRIES = 5;
+
+/**
+ * Lazy loading configuration
+ */
+/** Initial time window in hours for first fetch (expand if too few messages) */
+export const LAZY_LOAD_INITIAL_HOURS = 6;
+/** Hours to go back for each "load older" batch */
+export const LAZY_LOAD_BATCH_HOURS = 6;
+/** Minimum messages before stopping adaptive expansion on initial load */
+export const LAZY_LOAD_MIN_MESSAGES = 100;
+/** Pixels from top of scroll container to trigger loading older messages */
+export const LAZY_LOAD_SCROLL_THRESHOLD = 200;
+
+/**
+ * Incremental fetch overlap — seconds to look behind _lastFetchTimestamp.
+ * Covers the gap between when a message arrives and when the logbook
+ * recorder actually writes the entry (async pipeline delay).
+ * Duplicates are safely deduped by message ID on merge.
+ */
+export const INCREMENTAL_OVERLAP_S = 30;

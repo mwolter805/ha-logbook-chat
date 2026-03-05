@@ -17,6 +17,7 @@ import {
   PRESETS,
   KNOWN_CONFIG_KEYS,
   ENTITY_SWITCH_DEBOUNCE_MS,
+  LAZY_LOAD_SCROLL_THRESHOLD,
 } from './constants';
 
 // Re-export for HACS/HA registration
@@ -50,6 +51,7 @@ export class HaLogbookChat extends LitElement {
   @state() private _hasNewMessages = false;
   @state() private _inputText = '';
   @state() private _sending = false;
+  @state() private _loadingOlder = false;
 
   // Builtin mode state
   @state() private _builtinType: 'channel' | 'contact' = 'channel';
@@ -61,8 +63,14 @@ export class HaLogbookChat extends LitElement {
   private _store!: MessageStore;
   private _debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private _userScrolledUp = false;
+  private _initialScrollDone = false;
   private _chatContainer: HTMLElement | null = null;
   private _previousEntityId: string | null = null;
+  // Safety-net: track last known message count + newest ID to detect missed updates
+  private _lastKnownMsgCount = 0;
+  private _lastKnownMsgId: string | null = null;
+  // Scroll preservation for lazy-load prepend
+  private _scrollHeightBeforeUpdate: number | null = null;
 
   // HA card API
   static getConfigElement(): HTMLElement {
@@ -143,7 +151,10 @@ export class HaLogbookChat extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
-    // Restore scroll position after reconnect
+    if (this._store) {
+      this._store.resume();
+    }
+
     this.updateComplete.then(() => {
       this._scrollToBottom(false);
     });
@@ -152,7 +163,7 @@ export class HaLogbookChat extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._debounceTimer) clearTimeout(this._debounceTimer);
-    this._store?.destroy();
+    this._store?.pause();
   }
 
   protected updated(changedProps: PropertyValues): void {
@@ -161,10 +172,27 @@ export class HaLogbookChat extends LitElement {
     if (changedProps.has('hass') && this.hass) {
       this._store.setHass(this.hass);
       this._resolveAndFetch();
+      this._checkForMissedUpdates();
     }
 
-    // Apply config-driven CSS custom properties to :host
     this._applyCssProperties();
+  }
+
+  /**
+   * Safety net: compare store's current messages against what we last rendered.
+   * If they differ, force _onStoreUpdate() to sync the UI.
+   */
+  private _checkForMissedUpdates(): void {
+    if (!this._store) return;
+    const msgs = this._store.messages;
+    const count = msgs.length;
+    const newestId = count > 0 ? msgs[count - 1].id : null;
+
+    if (count !== this._lastKnownMsgCount || newestId !== this._lastKnownMsgId) {
+      this._lastKnownMsgCount = count;
+      this._lastKnownMsgId = newestId;
+      this._onStoreUpdate();
+    }
   }
 
   private _applyCssProperties(): void {
@@ -194,6 +222,11 @@ export class HaLogbookChat extends LitElement {
     // Debounce entity switches
     if (resolved.entityId !== this._previousEntityId) {
       if (this._debounceTimer) clearTimeout(this._debounceTimer);
+      // Reset scroll state on entity switch so the "new messages" badge
+      // doesn't appear immediately on first load / channel switch
+      this._userScrolledUp = false;
+      this._hasNewMessages = false;
+      this._initialScrollDone = false;
       this._debounceTimer = setTimeout(() => {
         this._previousEntityId = resolved.entityId;
         this._store.switchEntity(resolved.entityId);
@@ -255,20 +288,59 @@ export class HaLogbookChat extends LitElement {
   private _onStoreUpdate(): void {
     this._loading = this._store.loading;
     this._error = this._store.error;
+    const wasLoadingOlder = this._loadingOlder;
+    this._loadingOlder = this._store.loadingOlder;
 
     const messages = this._store.messages;
     this._renderItems = buildRenderItems(messages, this._config);
 
-    // Check for new messages when user scrolled up
-    if (this._userScrolledUp && messages.length > 0) {
+    // Keep safety-net tracker in sync
+    this._lastKnownMsgCount = messages.length;
+    this._lastKnownMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
+
+    // Check for new messages when user has scrolled up
+    // Only show badge after initial scroll-to-bottom has completed,
+    // otherwise the badge appears immediately on card open / entity switch
+    if (this._initialScrollDone && this._userScrolledUp && messages.length > 0) {
       this._hasNewMessages = true;
+    }
+
+    // Capture scroll height before render if we just finished loading older messages
+    // (wasLoadingOlder was true and now it's false = older messages were prepended)
+    if (wasLoadingOlder && !this._loadingOlder) {
+      const container = this._chatContainer ?? this.shadowRoot?.querySelector('.chat-container');
+      if (container) {
+        this._scrollHeightBeforeUpdate = container.scrollHeight;
+      }
     }
 
     this.requestUpdate();
 
-    // Auto-scroll if not manually scrolled up
-    if (!this._userScrolledUp) {
-      this.updateComplete.then(() => this._scrollToBottom(true));
+    // Preserve scroll position after older messages are prepended
+    if (this._scrollHeightBeforeUpdate !== null) {
+      const savedHeight = this._scrollHeightBeforeUpdate;
+      this._scrollHeightBeforeUpdate = null;
+      this.updateComplete.then(() => {
+        const container = this._chatContainer ?? this.shadowRoot?.querySelector('.chat-container');
+        if (container) {
+          const newScrollHeight = container.scrollHeight;
+          container.scrollTop += newScrollHeight - savedHeight;
+        }
+      });
+    } else if (!this._userScrolledUp) {
+      // Auto-scroll if not manually scrolled up
+      // Use instant scroll until the first scroll completes — smooth scroll
+      // triggers intermediate _onScroll events that falsely set _userScrolledUp
+      const useSmooth = this._initialScrollDone;
+      this.updateComplete.then(() => {
+        this._scrollToBottom(useSmooth);
+        if (!this._initialScrollDone) {
+          // Mark initial scroll done after a tick so _onScroll settles
+          requestAnimationFrame(() => {
+            this._initialScrollDone = true;
+          });
+        }
+      });
     }
   }
 
@@ -412,6 +484,11 @@ export class HaLogbookChat extends LitElement {
       : this._renderItems;
 
     return html`
+      ${this._loadingOlder
+        ? html`<div class="loading-older"><div class="loading-spinner"></div></div>`
+        : this._store?.hasOlderMessages
+          ? html`<div class="load-older-hint">Scroll up for older messages</div>`
+          : nothing}
       ${filteredItems.map((item) => {
         if (item.type === 'date-separator') {
           return html` <div class="date-separator" part="date-separator">${item.label}</div> `;
@@ -546,6 +623,17 @@ export class HaLogbookChat extends LitElement {
       this._hasNewMessages = false;
     }
     this._chatContainer = el;
+
+    // Lazy load: detect scroll near top
+    if (
+      el.scrollTop < LAZY_LOAD_SCROLL_THRESHOLD &&
+      this._store &&
+      !this._store.loadingOlder &&
+      this._store.hasOlderMessages &&
+      this._initialScrollDone
+    ) {
+      this._store.loadOlderMessages();
+    }
   }
 
   private _scrollToBottom(smooth: boolean): void {
@@ -581,14 +669,40 @@ export class HaLogbookChat extends LitElement {
   private async _copyMessage(msg: ChatMessage): Promise<void> {
     if (msg.isSystem) return;
     try {
-      await navigator.clipboard.writeText(msg.text);
+      // Try modern Clipboard API first
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(msg.text);
+      } else {
+        // Fallback for contexts where Clipboard API is unavailable
+        this._copyFallback(msg.text);
+      }
       this._showCopiedToast = true;
       setTimeout(() => {
         this._showCopiedToast = false;
       }, 1500);
     } catch {
-      // Clipboard API not available
+      // Clipboard API denied (e.g. non-secure context, iframe restrictions) — use fallback
+      try {
+        this._copyFallback(msg.text);
+        this._showCopiedToast = true;
+        setTimeout(() => {
+          this._showCopiedToast = false;
+        }, 1500);
+      } catch {
+        // Truly unavailable
+      }
     }
+  }
+
+  private _copyFallback(text: string): void {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
   }
 
   private _onInputChange(e: Event): void {
@@ -613,26 +727,29 @@ export class HaLogbookChat extends LitElement {
       const sendMode = this._config.send_mode ?? 'service';
 
       if (sendMode === 'service') {
-        const service = this._config.send_service;
-        if (!service) throw new Error('No send_service configured');
+        // Try direct MeshCore service calls first (bypass select entity sync entirely)
+        const sent = await this._trySendDirect(text);
+        if (!sent) {
+          // Fallback: sync select entities then call the configured send_service
+          // (for non-meshcore presets or custom send_service configs)
+          const service = this._config.send_service;
+          if (!service) throw new Error('No send_service configured');
 
-        const [domain, serviceName] = service.split('.');
+          const [domain, serviceName] = service.split('.');
 
-        // Sync recipient select entities to match the card's current view
-        // This ensures send_ui_message targets the correct channel/contact
-        await this._syncRecipientSelects();
+          await this._syncRecipientSelects();
 
-        // For meshcore.send_ui_message: set text entity first, then call service
-        if (this._config.send_text_entity) {
-          await this.hass.callService('text', 'set_value', {
-            entity_id: this._config.send_text_entity,
-            value: text,
+          if (this._config.send_text_entity) {
+            await this.hass.callService('text', 'set_value', {
+              entity_id: this._config.send_text_entity,
+              value: text,
+            });
+          }
+
+          await this.hass.callService(domain, serviceName, {
+            ...this._config.send_service_data,
           });
         }
-
-        await this.hass.callService(domain, serviceName, {
-          ...this._config.send_service_data,
-        });
       } else if (sendMode === 'entity') {
         // Set text entity value
         if (this._config.send_text_entity) {
@@ -652,10 +769,18 @@ export class HaLogbookChat extends LitElement {
 
       this._inputText = '';
 
-      // Refresh messages after a short delay to pick up the sent message
-      // The logbook API may not reflect the new entry immediately
-      setTimeout(() => this._store.refresh(), 1500);
-      setTimeout(() => this._store.refresh(), 4000);
+      // Show the sent message immediately via optimistic insert
+      // This gives instant visual feedback before the logbook API catches up
+      if (this._config.node_name) {
+        this._store.addOptimisticMessage(this._config.node_name, text);
+        this._onStoreUpdate();
+      }
+
+      // Also refresh from the API to get the canonical entry and remove the optimistic one
+      // MeshCore may take a few seconds to write the logbook entry after radio transmission
+      setTimeout(() => this._store.refresh(), 2000);
+      setTimeout(() => this._store.refresh(), 5000);
+      setTimeout(() => this._store.refresh(), 10000);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[ha-logbook-chat] Send failed:', err);
@@ -664,6 +789,60 @@ export class HaLogbookChat extends LitElement {
       this._sending = false;
       this.requestUpdate();
     }
+  }
+
+  /**
+   * Try to send using direct MeshCore service calls that bypass select entities.
+   * - Channels: meshcore.send_channel_message with channel_idx + message
+   * - Contacts: meshcore.send_message with pubkey_prefix + message
+   *
+   * Returns true if a direct send was performed, false to fall back to
+   * the select-entity-sync approach.
+   */
+  private async _trySendDirect(text: string): Promise<boolean> {
+    if (!this.hass || !this._resolved.entityId || !this._resolved.recipientType) return false;
+
+    // Only use direct calls when using the meshcore preset or meshcore send_service
+    const isMeshcore =
+      this._config.preset === 'meshcore' ||
+      this._config.send_service === 'meshcore.send_ui_message';
+    if (!isMeshcore) return false;
+
+    if (this._resolved.recipientType === 'channel') {
+      // Extract channel index from entity_id: binary_sensor.*_ch_1_messages → 1
+      const chMatch = this._resolved.entityId.match(/_ch_(\d+)_messages$/);
+      if (!chMatch) return false;
+
+      const channelIdx = parseInt(chMatch[1], 10);
+      console.debug(
+        `[ha-logbook-chat] Direct send: meshcore.send_channel_message ch=${channelIdx}`,
+      );
+
+      await this.hass.callService('meshcore', 'send_channel_message', {
+        channel_idx: channelIdx,
+        message: text,
+      });
+      return true;
+    }
+
+    if (this._resolved.recipientType === 'contact') {
+      // Extract contact hex prefix from entity_id: binary_sensor.*_ce7a01_messages → ce7a01
+      const ctMatch = this._resolved.entityId.match(/_([0-9a-f]{6,})_messages$/i);
+      if (!ctMatch) return false;
+
+      const pubkeyPrefix = ctMatch[1];
+      console.debug(
+        `[ha-logbook-chat] Direct send: meshcore.send_message prefix=${pubkeyPrefix}`,
+      );
+
+      await this.hass.callService('meshcore', 'send_message', {
+        pubkey_prefix: pubkeyPrefix,
+        message: text,
+      });
+      return true;
+    }
+
+    return false;
   }
 
   /**

@@ -128,6 +128,15 @@ export const cardStyles = css`
     color: var(--primary-text-color);
     font-size: 14px;
     min-height: 44px;
+    box-sizing: border-box;
+    /* Safari macOS ignores padding/height on native selects without this */
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 32px;
   }
 
   /* === Chat Container === */
@@ -438,6 +447,22 @@ export const cardStyles = css`
     to {
       transform: rotate(360deg);
     }
+  }
+
+  /* === Loading Older Messages === */
+  .loading-older {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+  }
+
+  .load-older-hint {
+    text-align: center;
+    padding: 8px;
+    font-size: 12px;
+    color: var(--timestamp-color);
+    opacity: 0.6;
   }
 
   /* === Error State === */

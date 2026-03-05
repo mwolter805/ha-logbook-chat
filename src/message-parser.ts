@@ -75,25 +75,50 @@ export function parseLogbookEntry(
   // Step 1: Strip channel prefix (e.g., "<Public> ", "<#test> ")
   const stripped = raw.replace(CHANNEL_PREFIX_REGEX, '');
 
-  // Step 2: Split on first ": " to extract sender and text
-  const separatorIndex = stripped.indexOf(': ');
+  // Step 2: Determine sender and text.
+  //
+  // The HA logbook API provides entry.name (the sender) and entry.message
+  // (the formatted text). For MeshCore, entry.name is ALWAYS the real sender.
+  // The message text may or may not have a "sender: " prefix embedded.
+  //
+  // IMPORTANT: We must NOT blindly split on ": " because the message text
+  // itself may contain ": " (e.g., "@Smky11: 👋" is a mention, not a sender).
+  // When entry.name is present, always trust it as the sender.
+  let sender: string;
+  let text: string;
 
-  if (separatorIndex === -1) {
-    // No sender:message pattern — treat as system message
-    return {
-      id: generateId(entry.when, '', stripped),
-      sender: '',
-      text: stripped,
-      timestamp,
-      isOutgoing: false,
-      isSystem: true,
-      raw,
-      mentions: extractMentions(stripped),
-    };
+  if (entry.name) {
+    // Prefer entry.name as the sender (most reliable source)
+    sender = entry.name;
+
+    // Strip the "sender: " prefix from the message text if present,
+    // so we don't show it redundantly (e.g., "MnE1: hello" → "hello")
+    const senderPrefix = sender + ': ';
+    if (stripped.startsWith(senderPrefix)) {
+      text = stripped.substring(senderPrefix.length);
+    } else {
+      text = stripped;
+    }
+  } else {
+    // No entry.name — fall back to splitting on ": " in the message
+    const separatorIndex = stripped.indexOf(': ');
+    if (separatorIndex !== -1) {
+      sender = stripped.substring(0, separatorIndex);
+      text = stripped.substring(separatorIndex + 2);
+    } else {
+      // No sender available anywhere — treat as system message
+      return {
+        id: generateId(entry.when, '', stripped),
+        sender: '',
+        text: stripped,
+        timestamp,
+        isOutgoing: false,
+        isSystem: true,
+        raw,
+        mentions: extractMentions(stripped),
+      };
+    }
   }
-
-  const sender = stripped.substring(0, separatorIndex);
-  const text = stripped.substring(separatorIndex + 2);
 
   // Step 3: Determine outgoing status
   const isOutgoing = sender === config.node_name;
@@ -121,8 +146,8 @@ export function parseLogbookEntries(
   config: Pick<CardConfig, 'node_name' | 'domain_filter'>,
 ): ChatMessage[] {
   const messages: ChatMessage[] = [];
-  for (const entry of entries) {
-    const msg = parseLogbookEntry(entry, config);
+  for (let i = 0; i < entries.length; i++) {
+    const msg = parseLogbookEntry(entries[i], config);
     if (msg) {
       messages.push(msg);
     }
@@ -142,12 +167,9 @@ export function groupMessages(messages: ChatMessage[], timeoutSeconds: number): 
   for (const msg of messages) {
     const shouldStartNewGroup =
       !currentGroup ||
-      // System messages are always their own group
       msg.isSystem ||
       currentGroup.isSystem ||
-      // Different sender
       msg.sender !== currentGroup.sender ||
-      // Timeout exceeded
       (msg.timestamp.getTime() - currentGroup.endTime.getTime()) / 1000 > timeoutSeconds;
 
     if (shouldStartNewGroup) {
