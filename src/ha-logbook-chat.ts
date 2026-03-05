@@ -618,6 +618,10 @@ export class HaLogbookChat extends LitElement {
 
         const [domain, serviceName] = service.split('.');
 
+        // Sync recipient select entities to match the card's current view
+        // This ensures send_ui_message targets the correct channel/contact
+        await this._syncRecipientSelects();
+
         // For meshcore.send_ui_message: set text entity first, then call service
         if (this._config.send_text_entity) {
           await this.hass.callService('text', 'set_value', {
@@ -654,6 +658,65 @@ export class HaLogbookChat extends LitElement {
     } finally {
       this._sending = false;
       this.requestUpdate();
+    }
+  }
+
+  /**
+   * Sync the HA select entities (recipient_type, channel, contact) to match
+   * the card's current resolved view. This ensures send_ui_message targets
+   * the correct recipient rather than whatever the select entities happen
+   * to be set to externally.
+   */
+  private async _syncRecipientSelects(): Promise<void> {
+    if (!this.hass || !this._resolved.recipientType) return;
+
+    // Sync recipient type select
+    if (this._config.recipient_type_entity) {
+      const currentType = this.hass.states[this._config.recipient_type_entity]?.state;
+      const targetType = this._resolved.recipientType === 'channel' ? 'Channel' : 'Contact';
+      if (currentType !== targetType) {
+        await this.hass.callService('select', 'select_option', {
+          entity_id: this._config.recipient_type_entity,
+          option: targetType,
+        });
+      }
+    }
+
+    // Sync channel or contact select to match the card's current selection
+    if (this._resolved.recipientType === 'channel' && this._config.channel_entity) {
+      const channelSelect = this.hass.states[this._config.channel_entity];
+      if (channelSelect) {
+        // Find the option that matches the card's current label/view
+        const currentOption = channelSelect.state;
+        const targetLabel = this._resolved.label;
+        if (currentOption !== targetLabel) {
+          // Match by label in the options list
+          const options = (channelSelect.attributes['options'] as string[]) ?? [];
+          const match = options.find((opt) => opt === targetLabel);
+          if (match) {
+            await this.hass.callService('select', 'select_option', {
+              entity_id: this._config.channel_entity,
+              option: match,
+            });
+          }
+        }
+      }
+    } else if (this._resolved.recipientType === 'contact' && this._config.contact_entity) {
+      const contactSelect = this.hass.states[this._config.contact_entity];
+      if (contactSelect) {
+        const currentOption = contactSelect.state;
+        const targetLabel = this._resolved.label;
+        if (currentOption !== targetLabel) {
+          const options = (contactSelect.attributes['options'] as string[]) ?? [];
+          const match = options.find((opt) => opt === targetLabel);
+          if (match) {
+            await this.hass.callService('select', 'select_option', {
+              entity_id: this._config.contact_entity,
+              option: match,
+            });
+          }
+        }
+      }
     }
   }
 
