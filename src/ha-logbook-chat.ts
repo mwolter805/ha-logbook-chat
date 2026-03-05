@@ -162,6 +162,20 @@ export class HaLogbookChat extends LitElement {
       this._store.setHass(this.hass);
       this._resolveAndFetch();
     }
+
+    // Apply config-driven CSS custom properties to :host
+    this._applyCssProperties();
+  }
+
+  private _applyCssProperties(): void {
+    if (!this._config) return;
+
+    if (this._config.max_height) {
+      this.style.setProperty('--chat-card-max-height', this._config.max_height);
+    }
+    if (this._config.bubble_max_width) {
+      this.style.setProperty('--bubble-max-width', this._config.bubble_max_width);
+    }
   }
 
   private _resolveAndFetch(): void {
