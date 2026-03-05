@@ -1,0 +1,54 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Check bundle size
+        run: |
+          SIZE=$(wc -c < dist/ha-logbook-chat.js)
+          GZIP_SIZE=$(gzip -c dist/ha-logbook-chat.js | wc -c)
+          echo "Bundle size: ${SIZE} bytes (${GZIP_SIZE} gzipped)"
+          if [ "$GZIP_SIZE" -gt 51200 ]; then
+            echo "::warning::Bundle exceeds 50KB gzipped target ($GZIP_SIZE bytes)"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ha-logbook-chat
+          path: dist/ha-logbook-chat.js

@@ -1,0 +1,52 @@
+{
+  "name": "ha-logbook-chat",
+  "version": "1.0.0",
+  "description": "A Home Assistant custom Lovelace card that renders logbook messages as a modern chat interface",
+  "main": "dist/ha-logbook-chat.js",
+  "scripts": {
+    "build": "rollup -c",
+    "dev": "rollup -c --watch",
+    "lint": "eslint src/ test/ --ext .ts",
+    "lint:fix": "eslint src/ test/ --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mwolter805/ha-logbook-chat"
+  },
+  "keywords": [
+    "home-assistant",
+    "lovelace",
+    "custom-card",
+    "chat",
+    "logbook",
+    "meshcore",
+    "hacs"
+  ],
+  "author": "mwolter805",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mwolter805/ha-logbook-chat/issues"
+  },
+  "homepage": "https://github.com/mwolter805/ha-logbook-chat#readme",
+  "dependencies": {
+    "lit": "^3.1.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^15.2.0",
+    "@rollup/plugin-typescript": "^11.1.0",
+    "@rollup/plugin-terser": "^0.4.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.2.0",
+    "rollup": "^4.9.0",
+    "tslib": "^2.6.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.2.0"
+  }
+}
