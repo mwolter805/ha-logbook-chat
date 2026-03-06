@@ -41,6 +41,7 @@ export const DEFAULT_CONFIG: Partial<CardConfig> = {
   cache_max_size: 5242880,
   max_height: '400px',
   bubble_max_width: '85%',
+  smooth_scroll: false,
 };
 
 /**
@@ -100,6 +101,7 @@ export const KNOWN_CONFIG_KEYS = new Set<string>([
   'cache_max_size',
   'max_height',
   'bubble_max_width',
+  'smooth_scroll',
   'card_mod',
 ]);
 

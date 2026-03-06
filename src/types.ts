@@ -227,4 +227,6 @@ export interface CardConfig {
   max_height?: string;
   /** Max bubble width (default: 85%) */
   bubble_max_width?: string;
+  /** Enable smooth scroll animations (default: false — causes issues on iOS) */
+  smooth_scroll?: boolean;
 }

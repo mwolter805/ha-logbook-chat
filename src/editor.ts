@@ -226,6 +226,16 @@ export class HaLogbookChatEditor extends LitElement {
               this._updateConfig('group_messages', (e.target as HTMLInputElement).checked)}
           />
         </div>
+        <div class="row">
+          <label>Smooth Scroll</label>
+          <input
+            type="checkbox"
+            ?checked=${this._config.smooth_scroll ?? false}
+            @change=${(e: Event) =>
+              this._updateConfig('smooth_scroll', (e.target as HTMLInputElement).checked)}
+          />
+        </div>
+        <div class="hint">Enable smooth scroll animations (may cause issues on iOS)</div>
       </div>
 
       <div class="section">

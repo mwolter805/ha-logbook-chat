@@ -147,7 +147,6 @@ export const cardStyles = css`
     padding: 8px 12px;
     max-height: var(--chat-max-height);
     background: var(--chat-bg);
-    scroll-behavior: smooth;
     position: relative;
   }
 

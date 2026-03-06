@@ -292,16 +292,21 @@ export class HaLogbookChat extends LitElement {
     this._loadingOlder = this._store.loadingOlder;
 
     const messages = this._store.messages;
+    const prevMsgId = this._lastKnownMsgId;
     this._renderItems = buildRenderItems(messages, this._config);
 
     // Keep safety-net tracker in sync
     this._lastKnownMsgCount = messages.length;
     this._lastKnownMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
 
-    // Check for new messages when user has scrolled up
-    // Only show badge after initial scroll-to-bottom has completed,
-    // otherwise the badge appears immediately on card open / entity switch
-    if (this._initialScrollDone && this._userScrolledUp && messages.length > 0) {
+    // Check for new messages when user has scrolled up — only show badge
+    // when the *newest* message actually changed (different last ID).
+    // We deliberately do NOT check message count here because lazy-loading
+    // older messages increases the count without adding anything new at the
+    // bottom, which would incorrectly trigger the badge.
+    const hasNewContent =
+      messages.length > 0 && messages[messages.length - 1].id !== prevMsgId;
+    if (this._initialScrollDone && this._userScrolledUp && hasNewContent) {
       this._hasNewMessages = true;
     }
 
@@ -328,12 +333,13 @@ export class HaLogbookChat extends LitElement {
         }
       });
     } else if (!this._userScrolledUp) {
-      // Auto-scroll if not manually scrolled up
-      // Use instant scroll until the first scroll completes — smooth scroll
-      // triggers intermediate _onScroll events that falsely set _userScrolledUp
-      const useSmooth = this._initialScrollDone;
+      // Auto-scroll: always use instant (synchronous scrollTop assignment).
+      // Smooth scrolling causes visible "bounce" on iOS because re-renders
+      // interrupt the animation mid-flight, displacing the scroll target.
+      // Smooth scroll is reserved for user-initiated actions only
+      // (e.g. clicking the "New messages" badge).
       this.updateComplete.then(() => {
-        this._scrollToBottom(useSmooth);
+        this._scrollToBottom(false);
         if (!this._initialScrollDone) {
           // Mark initial scroll done after a tick so _onScroll settles
           requestAnimationFrame(() => {
@@ -639,17 +645,20 @@ export class HaLogbookChat extends LitElement {
   private _scrollToBottom(smooth: boolean): void {
     const el = this._chatContainer ?? this.shadowRoot?.querySelector('.chat-container');
     if (el) {
-      el.scrollTo({
-        top: el.scrollHeight,
-        behavior: smooth ? 'smooth' : 'instant',
-      });
+      if (smooth) {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      } else {
+        // Direct assignment is fully synchronous — no animation for iOS to interrupt.
+        // scrollTo({ behavior: 'instant' }) can still cause a frame delay on iOS.
+        el.scrollTop = el.scrollHeight;
+      }
     }
   }
 
   private _scrollToBottomClick(): void {
     this._hasNewMessages = false;
     this._userScrolledUp = false;
-    this._scrollToBottom(true);
+    this._scrollToBottom(this._config.smooth_scroll ?? false);
   }
 
   private _onSearchInput(e: Event): void {
@@ -773,14 +782,22 @@ export class HaLogbookChat extends LitElement {
       // This gives instant visual feedback before the logbook API catches up
       if (this._config.node_name) {
         this._store.addOptimisticMessage(this._config.node_name, text);
+        // Force scroll to bottom — user just sent a message, they want to see it
+        this._userScrolledUp = false;
+        this._hasNewMessages = false;
         this._onStoreUpdate();
       }
 
       // Also refresh from the API to get the canonical entry and remove the optimistic one
       // MeshCore may take a few seconds to write the logbook entry after radio transmission
-      setTimeout(() => this._store.refresh(), 2000);
-      setTimeout(() => this._store.refresh(), 5000);
-      setTimeout(() => this._store.refresh(), 10000);
+      // Force scroll to bottom on each refresh so the view stays pinned after send
+      const refreshAndScroll = () => {
+        this._store.refresh();
+        this._userScrolledUp = false;
+      };
+      setTimeout(refreshAndScroll, 2000);
+      setTimeout(refreshAndScroll, 5000);
+      setTimeout(refreshAndScroll, 10000);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[ha-logbook-chat] Send failed:', err);
@@ -957,3 +974,9 @@ window.customCards.push({
   description: 'Renders logbook message history as a modern chat interface',
   preview: true,
 });
+
+console.info(
+  `%c  HA-LOGBOOK-CHAT  %c v1.1.1 `,
+  'color: white; background: #03a9f4; font-weight: bold; padding: 2px 6px; border-radius: 4px 0 0 4px;',
+  'color: #03a9f4; background: #e3f2fd; font-weight: bold; padding: 2px 6px; border-radius: 0 4px 4px 0;',
+);
