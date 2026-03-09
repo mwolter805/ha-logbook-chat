@@ -5,7 +5,9 @@ import {
   resolveEntity,
   discoverChannels,
   discoverContacts,
+  discoverContactEntity,
   type ResolvedEntity,
+  type BuiltinContact,
 } from './entity-resolver';
 import { MessageStore } from './message-store';
 import { buildRenderItems, formatTimestamp } from './message-parser';
@@ -42,6 +44,7 @@ export class HaLogbookChat extends LitElement {
     recipientType: null,
     label: '',
     error: null,
+    contactPrefix: null,
   };
   @state() private _renderItems: RenderItem[] = [];
   @state() private _loading = false;
@@ -56,7 +59,7 @@ export class HaLogbookChat extends LitElement {
   // Builtin mode state
   @state() private _builtinType: 'channel' | 'contact' = 'channel';
   @state() private _builtinChannels: Array<{ name: string; idx: number; entityId: string }> = [];
-  @state() private _builtinContacts: Array<{ name: string; prefix: string; entityId: string }> = [];
+  @state() private _builtinContacts: BuiltinContact[] = [];
   @state() private _builtinSelectedChannel = 0;
   @state() private _builtinSelectedContact = '';
 
@@ -66,6 +69,7 @@ export class HaLogbookChat extends LitElement {
   private _initialScrollDone = false;
   private _chatContainer: HTMLElement | null = null;
   private _previousEntityId: string | null = null;
+  private _previousContactPrefix: string | null = null;
   // Safety-net: track last known message count + newest ID to detect missed updates
   private _lastKnownMsgCount = 0;
   private _lastKnownMsgId: string | null = null;
@@ -219,8 +223,22 @@ export class HaLogbookChat extends LitElement {
 
     this._resolved = resolved;
 
-    // Debounce entity switches
-    if (resolved.entityId !== this._previousEntityId) {
+    // Detect entity/contact change for debounced switch.
+    // For contacts without message history, entityId is null but contactPrefix
+    // identifies the target. We switch when either changes.
+    const entityChanged = resolved.entityId !== this._previousEntityId;
+    const contactChanged = resolved.contactPrefix !== this._previousContactPrefix;
+
+    // Mid-session _messages entity appearance: if we previously had a contact
+    // with no entityId, and now it has one, switch to it for logbook display
+    const entityAppeared =
+      !entityChanged &&
+      !contactChanged &&
+      resolved.entityId !== null &&
+      this._previousEntityId === null &&
+      resolved.contactPrefix !== null;
+
+    if (entityChanged || contactChanged || entityAppeared) {
       if (this._debounceTimer) clearTimeout(this._debounceTimer);
       // Reset scroll state on entity switch so the "new messages" badge
       // doesn't appear immediately on first load / channel switch
@@ -229,8 +247,23 @@ export class HaLogbookChat extends LitElement {
       this._initialScrollDone = false;
       this._debounceTimer = setTimeout(() => {
         this._previousEntityId = resolved.entityId;
+        this._previousContactPrefix = resolved.contactPrefix;
         this._store.switchEntity(resolved.entityId);
       }, ENTITY_SWITCH_DEBOUNCE_MS);
+    } else if (
+      resolved.contactPrefix &&
+      !resolved.entityId &&
+      this._previousContactPrefix === resolved.contactPrefix
+    ) {
+      // Contact selected but no _messages entity yet — check if one appeared
+      // since the last hass update (e.g., after first message was sent)
+      const newEntityId = discoverContactEntity(this.hass, this._config, resolved.contactPrefix);
+      if (newEntityId) {
+        // _messages entity just appeared! Update resolved and switch to it
+        this._resolved = { ...resolved, entityId: newEntityId };
+        this._previousEntityId = newEntityId;
+        this._store.switchEntity(newEntityId);
+      }
     }
 
     // Update builtin mode discovery
@@ -242,7 +275,7 @@ export class HaLogbookChat extends LitElement {
 
   private _resolveBuiltin(): ResolvedEntity {
     if (!this.hass) {
-      return { entityId: null, recipientType: null, label: '', error: 'No hass' };
+      return { entityId: null, recipientType: null, label: '', error: 'No hass', contactPrefix: null };
     }
 
     if (this._builtinType === 'channel') {
@@ -253,6 +286,7 @@ export class HaLogbookChat extends LitElement {
           recipientType: 'channel',
           label: channel.name,
           error: null,
+          contactPrefix: null,
         };
       }
       // Try discovering
@@ -263,24 +297,29 @@ export class HaLogbookChat extends LitElement {
           recipientType: 'channel',
           label: channels[0].name,
           error: null,
+          contactPrefix: null,
         };
       }
-      return { entityId: null, recipientType: 'channel', label: 'No channels found', error: null };
+      return { entityId: null, recipientType: 'channel', label: 'No channels found', error: null, contactPrefix: null };
     } else {
       const contact = this._builtinContacts.find((c) => c.prefix === this._builtinSelectedContact);
       if (contact) {
         return {
-          entityId: contact.entityId,
+          entityId: contact.entityId,  // null if no message history yet
           recipientType: 'contact',
           label: contact.name,
           error: null,
+          contactPrefix: contact.prefix,
         };
       }
+      // No contacts available or none selected
+      const hasContacts = this._builtinContacts.length > 0;
       return {
         entityId: null,
         recipientType: 'contact',
-        label: 'No contact selected',
+        label: hasContacts ? 'No contact selected' : 'No saved contacts',
         error: null,
+        contactPrefix: null,
       };
     }
   }
@@ -424,16 +463,18 @@ export class HaLogbookChat extends LitElement {
           : html`
               <select @change=${this._onContactSelect}>
                 <option value="">Select a contact...</option>
-                ${this._builtinContacts.map(
-                  (ct) => html`
-                    <option
-                      value=${ct.prefix}
-                      ?selected=${ct.prefix === this._builtinSelectedContact}
-                    >
-                      ${ct.name}
-                    </option>
-                  `,
-                )}
+                ${this._builtinContacts.length === 0
+                  ? html`<option value="" disabled>No saved contacts</option>`
+                  : this._builtinContacts.map(
+                      (ct) => html`
+                        <option
+                          value=${ct.prefix}
+                          ?selected=${ct.prefix === this._builtinSelectedContact}
+                        >
+                          ${ct.name}
+                        </option>
+                      `,
+                    )}
               </select>
             `}
       </div>
@@ -472,6 +513,21 @@ export class HaLogbookChat extends LitElement {
 
   private _renderEmpty(): TemplateResult {
     const label = this._resolved.label || 'this channel';
+
+    // Contact with no message history yet — show "start conversation" prompt
+    if (this._resolved.contactPrefix && !this._resolved.entityId) {
+      return html`
+        <div class="empty-state" part="empty-state">
+          <div class="empty-icon">💬</div>
+          <div class="empty-text">
+            No messages yet with ${label}.<br />
+            ${this._config.show_input ? 'Send a message to start the conversation.' : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    // No selection or no messages in existing entity
     return html`
       <div class="empty-state" part="empty-state">
         <div class="empty-icon">💬</div>
@@ -586,12 +642,15 @@ export class HaLogbookChat extends LitElement {
   private _renderInputArea(): TemplateResult | typeof nothing {
     if (!this._config.show_input) return nothing;
 
-    const disabled = !this._resolved.entityId || this._sending;
+    // Allow input if we have either an entityId (message history exists)
+    // OR a contactPrefix (contact is valid, just no messages yet)
+    const canSend = !!(this._resolved.entityId || this._resolved.contactPrefix);
+    const disabled = !canSend || this._sending;
     return html`
       <div class="input-area" part="input-area">
         <textarea
           rows="1"
-          placeholder=${this._resolved.entityId
+          placeholder=${canSend
             ? 'Type a message...'
             : 'Select a channel or contact'}
           .value=${this._inputText}
@@ -727,7 +786,8 @@ export class HaLogbookChat extends LitElement {
 
   private async _sendMessage(): Promise<void> {
     const text = this._inputText.trim();
-    if (!text || !this.hass || !this._resolved.entityId) return;
+    // Allow sending if we have entityId (existing messages) OR contactPrefix (new contact)
+    if (!text || !this.hass || (!this._resolved.entityId && !this._resolved.contactPrefix)) return;
 
     this._sending = true;
     this.requestUpdate();
@@ -817,7 +877,7 @@ export class HaLogbookChat extends LitElement {
    * the select-entity-sync approach.
    */
   private async _trySendDirect(text: string): Promise<boolean> {
-    if (!this.hass || !this._resolved.entityId || !this._resolved.recipientType) return false;
+    if (!this.hass || !this._resolved.recipientType) return false;
 
     // Only use direct calls when using the meshcore preset or meshcore send_service
     const isMeshcore =
@@ -826,6 +886,9 @@ export class HaLogbookChat extends LitElement {
     if (!isMeshcore) return false;
 
     if (this._resolved.recipientType === 'channel') {
+      // Channels still require an entityId to extract the channel index
+      if (!this._resolved.entityId) return false;
+
       // Extract channel index from entity_id: binary_sensor.*_ch_1_messages → 1
       const chMatch = this._resolved.entityId.match(/_ch_(\d+)_messages$/);
       if (!chMatch) return false;
@@ -843,11 +906,26 @@ export class HaLogbookChat extends LitElement {
     }
 
     if (this._resolved.recipientType === 'contact') {
-      // Extract contact hex prefix from entity_id: binary_sensor.*_ce7a01_messages → ce7a01
-      const ctMatch = this._resolved.entityId.match(/_([0-9a-f]{6,})_messages$/i);
-      if (!ctMatch) return false;
+      // Use contactPrefix from resolved state — works even without _messages entity
+      const pubkeyPrefix = this._resolved.contactPrefix;
+      if (!pubkeyPrefix) {
+        // Fallback: try extracting from entityId (legacy path)
+        if (!this._resolved.entityId) return false;
+        const ctMatch = this._resolved.entityId.match(/_([0-9a-f]{6,})_messages$/i);
+        if (!ctMatch) return false;
+        const legacyPrefix = ctMatch[1];
 
-      const pubkeyPrefix = ctMatch[1];
+        console.debug(
+          `[ha-logbook-chat] Direct send (legacy): meshcore.send_message prefix=${legacyPrefix}`,
+        );
+
+        await this.hass.callService('meshcore', 'send_message', {
+          pubkey_prefix: legacyPrefix,
+          message: text,
+        });
+        return true;
+      }
+
       console.debug(
         `[ha-logbook-chat] Direct send: meshcore.send_message prefix=${pubkeyPrefix}`,
       );
@@ -872,7 +950,9 @@ export class HaLogbookChat extends LitElement {
    * than label comparison, since resolved labels may differ from select options.
    */
   private async _syncRecipientSelects(): Promise<void> {
-    if (!this.hass || !this._resolved.recipientType || !this._resolved.entityId) return;
+    if (!this.hass || !this._resolved.recipientType) return;
+    // Need either entityId or contactPrefix to sync
+    if (!this._resolved.entityId && !this._resolved.contactPrefix) return;
 
     // Sync recipient type select
     if (this._config.recipient_type_entity) {
@@ -887,7 +967,7 @@ export class HaLogbookChat extends LitElement {
     }
 
     // Sync channel or contact select based on the resolved entity ID
-    if (this._resolved.recipientType === 'channel' && this._config.channel_entity) {
+    if (this._resolved.recipientType === 'channel' && this._config.channel_entity && this._resolved.entityId) {
       // Extract channel index from the resolved entity_id (e.g., binary_sensor.*_ch_1_messages → 1)
       const chMatch = this._resolved.entityId.match(/_ch_(\d+)_messages$/);
       if (chMatch) {
@@ -913,10 +993,14 @@ export class HaLogbookChat extends LitElement {
         }
       }
     } else if (this._resolved.recipientType === 'contact' && this._config.contact_entity) {
-      // Extract contact prefix from the resolved entity_id (e.g., binary_sensor.*_ce7a01_messages → ce7a01)
-      const ctMatch = this._resolved.entityId.match(/_([0-9a-f]{6,})_messages$/i);
-      if (ctMatch) {
-        const targetPrefix = ctMatch[1];
+      // Get contact prefix: prefer resolved contactPrefix, fall back to extracting from entityId
+      let targetPrefix = this._resolved.contactPrefix;
+      if (!targetPrefix && this._resolved.entityId) {
+        const ctMatch = this._resolved.entityId.match(/_([0-9a-f]{6,})_messages$/i);
+        if (ctMatch) targetPrefix = ctMatch[1];
+      }
+
+      if (targetPrefix) {
         const contactSelect = this.hass.states[this._config.contact_entity];
         if (contactSelect) {
           // Check if already pointing to the right contact
@@ -926,7 +1010,7 @@ export class HaLogbookChat extends LitElement {
             const options = (contactSelect.attributes['options'] as string[]) ?? [];
             const match = options.find((opt) => {
               const m = opt.match(/\(([0-9a-f]{6,})\)\s*$/i);
-              return m && m[1].startsWith(targetPrefix);
+              return m && m[1].startsWith(targetPrefix!);
             });
             if (match) {
               await this.hass.callService('select', 'select_option', {
@@ -976,7 +1060,7 @@ window.customCards.push({
 });
 
 console.info(
-  `%c  HA-LOGBOOK-CHAT  %c v1.1.1 `,
+  `%c  HA-LOGBOOK-CHAT  %c v1.2.0 `,
   'color: white; background: #03a9f4; font-weight: bold; padding: 2px 6px; border-radius: 4px 0 0 4px;',
   'color: #03a9f4; background: #e3f2fd; font-weight: bold; padding: 2px 6px; border-radius: 0 4px 4px 0;',
 );

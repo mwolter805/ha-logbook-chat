@@ -4,7 +4,7 @@ import type { CardConfig, HomeAssistant, HassEntity } from './types';
  * Result of entity resolution
  */
 export interface ResolvedEntity {
-  /** The resolved binary_sensor entity_id to fetch logbook from */
+  /** The resolved binary_sensor entity_id to fetch logbook from (null if no message history yet) */
   entityId: string | null;
   /** Current recipient type (channel or contact) */
   recipientType: 'channel' | 'contact' | null;
@@ -12,6 +12,18 @@ export interface ResolvedEntity {
   label: string;
   /** Error message if resolution failed */
   error: string | null;
+  /** Contact pubkey prefix — present for contacts even when entityId is null (no message history) */
+  contactPrefix: string | null;
+}
+
+/**
+ * Contact info for builtin mode dropdown.
+ * entityId is null when the contact has no message history yet (no _messages entity).
+ */
+export interface BuiltinContact {
+  name: string;
+  prefix: string;
+  entityId: string | null;
 }
 
 /**
@@ -22,7 +34,7 @@ export interface BuiltinState {
   /** Available channels from hass states */
   channels: Array<{ name: string; idx: number }>;
   /** Available contacts from hass states */
-  contacts: Array<{ name: string; prefix: string; entityId: string }>;
+  contacts: BuiltinContact[];
   /** Currently selected channel index */
   selectedChannelIdx: number;
   /** Currently selected contact prefix */
@@ -45,7 +57,7 @@ export function resolveEntity(hass: HomeAssistant, config: CardConfig): Resolved
       // The main card component manages the builtin state and passes the resolved values
       return resolveExternal(hass, config);
     default:
-      return { entityId: null, recipientType: null, label: '', error: `Unknown mode: ${mode}` };
+      return { entityId: null, recipientType: null, label: '', error: `Unknown mode: ${mode}`, contactPrefix: null };
   }
 }
 
@@ -59,6 +71,7 @@ function resolveStatic(config: CardConfig): ResolvedEntity {
       recipientType: null,
       label: '',
       error: 'Static mode requires an "entity" config key',
+      contactPrefix: null,
     };
   }
   return {
@@ -66,6 +79,7 @@ function resolveStatic(config: CardConfig): ResolvedEntity {
     recipientType: null,
     label: config.entity,
     error: null,
+    contactPrefix: null,
   };
 }
 
@@ -73,7 +87,7 @@ function resolveStatic(config: CardConfig): ResolvedEntity {
  * External mode: read HA select entities to determine the target.
  */
 function resolveExternal(hass: HomeAssistant, config: CardConfig): ResolvedEntity {
-  // Determine recipient type from the type selector entity
+  // If no recipient_type_entity is configured, auto-detect based on what's available
   const typeEntity = config.recipient_type_entity
     ? hass.states[config.recipient_type_entity]
     : undefined;
@@ -105,6 +119,7 @@ function resolveChannel(hass: HomeAssistant, config: CardConfig): ResolvedEntity
       error: config.channel_entity
         ? `Channel entity ${config.channel_entity} not found`
         : 'No channel_entity configured',
+      contactPrefix: null,
     };
   }
 
@@ -116,6 +131,7 @@ function resolveChannel(hass: HomeAssistant, config: CardConfig): ResolvedEntity
       recipientType: 'channel',
       label: channelEntity.state,
       error: `Could not determine channel index from ${config.channel_entity}`,
+      contactPrefix: null,
     };
   }
 
@@ -129,10 +145,11 @@ function resolveChannel(hass: HomeAssistant, config: CardConfig): ResolvedEntity
       recipientType: 'channel',
       label,
       error: `No message entity found for channel ${channelIdx}`,
+      contactPrefix: null,
     };
   }
 
-  return { entityId, recipientType: 'channel', label, error: null };
+  return { entityId, recipientType: 'channel', label, error: null, contactPrefix: null };
 }
 
 /**
@@ -149,6 +166,7 @@ function resolveContact(hass: HomeAssistant, config: CardConfig): ResolvedEntity
       error: config.contact_entity
         ? `Contact entity ${config.contact_entity} not found`
         : 'No contact_entity configured',
+      contactPrefix: null,
     };
   }
 
@@ -160,6 +178,7 @@ function resolveContact(hass: HomeAssistant, config: CardConfig): ResolvedEntity
       recipientType: 'contact',
       label: contactEntity.state,
       error: `Could not determine contact prefix from ${config.contact_entity}`,
+      contactPrefix: null,
     };
   }
 
@@ -168,16 +187,16 @@ function resolveContact(hass: HomeAssistant, config: CardConfig): ResolvedEntity
   const contactName =
     (contactEntity.attributes['contact_name'] as string) || contactEntity.state || contactPrefix;
 
-  if (!entityId) {
-    return {
-      entityId: null,
-      recipientType: 'contact',
-      label: contactName,
-      error: `No message entity found for contact ${contactPrefix}`,
-    };
-  }
-
-  return { entityId, recipientType: 'contact', label: contactName, error: null };
+  // Key change: if we have a valid contact prefix but no _messages entity,
+  // this is NOT an error — it just means no messages have been exchanged yet.
+  // The card can still send messages using the pubkey prefix.
+  return {
+    entityId,          // null if no message history yet — that's OK
+    recipientType: 'contact',
+    label: contactName,
+    error: null,       // no error — contact is valid
+    contactPrefix,     // always populated for contacts
+  };
 }
 
 /**
@@ -259,8 +278,9 @@ function discoverChannelEntity(
 /**
  * Search hass.states for a binary_sensor matching the contact pattern.
  * Uses dynamic discovery: looks for entities containing _{prefix6char}_messages.
+ * Exported so the main card can detect mid-session _messages entity appearance.
  */
-function discoverContactEntity(
+export function discoverContactEntity(
   hass: HomeAssistant,
   config: CardConfig,
   contactPrefix: string,
@@ -319,13 +339,75 @@ export function discoverChannels(
 }
 
 /**
- * Discover available contacts from hass states for builtin mode.
+ * Discover available contacts for builtin mode.
+ *
+ * For MeshCore preset: reads from select.meshcore_contact options, which contains
+ * ALL saved contacts immediately. Cross-references _messages entities for those
+ * that have message history.
+ *
+ * Legacy fallback: scans hass states for _messages entities (old behavior).
  */
 export function discoverContacts(
   hass: HomeAssistant,
   config: CardConfig,
-): Array<{ name: string; prefix: string; entityId: string }> {
-  const contacts: Array<{ name: string; prefix: string; entityId: string }> = [];
+): BuiltinContact[] {
+  // Try select-based discovery first (MeshCore preset)
+  const selectContacts = discoverContactsFromSelect(hass, config);
+  if (selectContacts !== null) {
+    return selectContacts;
+  }
+
+  // Legacy fallback: scan for _messages entities
+  return discoverContactsLegacy(hass, config);
+}
+
+/**
+ * Discover contacts from select.meshcore_contact options.
+ * Returns null if the select entity doesn't exist (legacy fallback needed).
+ */
+function discoverContactsFromSelect(
+  hass: HomeAssistant,
+  config: CardConfig,
+): BuiltinContact[] | null {
+  const selectEntityId = config.contact_entity;
+  if (!selectEntityId) return null;
+
+  const selectEntity = hass.states[selectEntityId];
+  if (!selectEntity) return null;
+
+  const options = selectEntity.attributes['options'] as string[] | undefined;
+  if (!options || options.length === 0) return null;
+
+  const contacts: BuiltinContact[] = [];
+  const prefixRegex = /\(([0-9a-f]{6,})\)\s*$/i;
+
+  for (const option of options) {
+    const match = option.match(prefixRegex);
+    if (!match) continue; // Skip non-contact options (e.g., "No contacts")
+
+    const fullPrefix = match[1];
+    const prefix6 = fullPrefix.substring(0, 6);
+    // Extract name: everything before the " (prefix)" part
+    const name = option.replace(/\s*\([0-9a-f]{6,}\)\s*$/i, '').trim() || prefix6;
+
+    // Cross-reference: try to find a _messages entity for this contact
+    const entityId = discoverContactEntity(hass, config, prefix6);
+
+    contacts.push({ name, prefix: prefix6, entityId });
+  }
+
+  return contacts.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Legacy contact discovery: scan hass states for _messages entities.
+ * Only finds contacts that have exchanged at least one message.
+ */
+function discoverContactsLegacy(
+  hass: HomeAssistant,
+  config: CardConfig,
+): BuiltinContact[] {
+  const contacts: BuiltinContact[] = [];
   const prefixFilter = config.node_prefix ? `_${config.node_prefix}_` : '';
   // Contact entities end with _messages but NOT _ch_N_messages and NOT _rx_messages
   const channelRegex = /_ch_\d+_messages$/;
