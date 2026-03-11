@@ -6,6 +6,7 @@ import {
   discoverChannels,
   discoverContacts,
   discoverContactEntity,
+  discoverChannelEntity,
   type ResolvedEntity,
   type BuiltinContact,
 } from './entity-resolver';
@@ -58,7 +59,7 @@ export class HaLogbookChat extends LitElement {
 
   // Builtin mode state
   @state() private _builtinType: 'channel' | 'contact' = 'channel';
-  @state() private _builtinChannels: Array<{ name: string; idx: number; entityId: string }> = [];
+  @state() private _builtinChannels: Array<{ name: string; idx: number; entityId: string | null }> = [];
   @state() private _builtinContacts: BuiltinContact[] = [];
   @state() private _builtinSelectedChannel = 0;
   @state() private _builtinSelectedContact = '';
@@ -258,6 +259,21 @@ export class HaLogbookChat extends LitElement {
       // Contact selected but no _messages entity yet — check if one appeared
       // since the last hass update (e.g., after first message was sent)
       const newEntityId = discoverContactEntity(this.hass, this._config, resolved.contactPrefix);
+      if (newEntityId) {
+        // _messages entity just appeared! Update resolved and switch to it
+        this._resolved = { ...resolved, entityId: newEntityId };
+        this._previousEntityId = newEntityId;
+        this._store.switchEntity(newEntityId);
+      }
+    } else if (
+      resolved.recipientType === 'channel' &&
+      !resolved.entityId &&
+      this._config.mode === 'builtin'
+    ) {
+      // Channel selected but no _messages entity yet — check if one appeared
+      // since the last hass update (e.g., after first message was received)
+      const channelIdx = this._builtinSelectedChannel;
+      const newEntityId = discoverChannelEntity(this.hass, this._config, channelIdx);
       if (newEntityId) {
         // _messages entity just appeared! Update resolved and switch to it
         this._resolved = { ...resolved, entityId: newEntityId };
@@ -527,6 +543,19 @@ export class HaLogbookChat extends LitElement {
       `;
     }
 
+    // Channel with no message history yet — show empty state with send prompt
+    if (this._resolved.recipientType === 'channel' && !this._resolved.entityId) {
+      return html`
+        <div class="empty-state" part="empty-state">
+          <div class="empty-icon">💬</div>
+          <div class="empty-text">
+            No messages yet in ${label}.<br />
+            ${this._config.show_input ? 'Send a message to start the conversation.' : ''}
+          </div>
+        </div>
+      `;
+    }
+
     // No selection or no messages in existing entity
     return html`
       <div class="empty-state" part="empty-state">
@@ -642,9 +671,14 @@ export class HaLogbookChat extends LitElement {
   private _renderInputArea(): TemplateResult | typeof nothing {
     if (!this._config.show_input) return nothing;
 
-    // Allow input if we have either an entityId (message history exists)
-    // OR a contactPrefix (contact is valid, just no messages yet)
-    const canSend = !!(this._resolved.entityId || this._resolved.contactPrefix);
+    // Allow input if we have either an entityId (message history exists),
+    // a contactPrefix (contact is valid, just no messages yet),
+    // or a channel selected in builtin mode (channel is valid, just no messages yet)
+    const canSend = !!(
+      this._resolved.entityId ||
+      this._resolved.contactPrefix ||
+      (this._resolved.recipientType === 'channel' && this._config.mode === 'builtin')
+    );
     const disabled = !canSend || this._sending;
     return html`
       <div class="input-area" part="input-area">
@@ -786,8 +820,13 @@ export class HaLogbookChat extends LitElement {
 
   private async _sendMessage(): Promise<void> {
     const text = this._inputText.trim();
-    // Allow sending if we have entityId (existing messages) OR contactPrefix (new contact)
-    if (!text || !this.hass || (!this._resolved.entityId && !this._resolved.contactPrefix)) return;
+    // Allow sending if we have entityId (existing messages), contactPrefix (new contact),
+    // or a channel selected in builtin mode (new channel with no messages yet)
+    const canSend =
+      this._resolved.entityId ||
+      this._resolved.contactPrefix ||
+      (this._resolved.recipientType === 'channel' && this._config.mode === 'builtin');
+    if (!text || !this.hass || !canSend) return;
 
     this._sending = true;
     this.requestUpdate();
@@ -886,14 +925,19 @@ export class HaLogbookChat extends LitElement {
     if (!isMeshcore) return false;
 
     if (this._resolved.recipientType === 'channel') {
-      // Channels still require an entityId to extract the channel index
-      if (!this._resolved.entityId) return false;
+      let channelIdx: number | null = null;
 
-      // Extract channel index from entity_id: binary_sensor.*_ch_1_messages → 1
-      const chMatch = this._resolved.entityId.match(/_ch_(\d+)_messages$/);
-      if (!chMatch) return false;
+      if (this._resolved.entityId) {
+        // Extract channel index from entity_id: binary_sensor.*_ch_1_messages → 1
+        const chMatch = this._resolved.entityId.match(/_ch_(\d+)_messages$/);
+        if (chMatch) channelIdx = parseInt(chMatch[1], 10);
+      } else if (this._config.mode === 'builtin') {
+        // No entity yet — use builtin selection (channel with no message history)
+        channelIdx = this._builtinSelectedChannel;
+      }
 
-      const channelIdx = parseInt(chMatch[1], 10);
+      if (channelIdx === null) return false;
+
       console.debug(
         `[ha-logbook-chat] Direct send: meshcore.send_channel_message ch=${channelIdx}`,
       );
@@ -1060,7 +1104,7 @@ window.customCards.push({
 });
 
 console.info(
-  `%c  HA-LOGBOOK-CHAT  %c v1.2.0 `,
+  `%c  HA-LOGBOOK-CHAT  %c v1.3.0 `,
   'color: white; background: #03a9f4; font-weight: bold; padding: 2px 6px; border-radius: 4px 0 0 4px;',
   'color: #03a9f4; background: #e3f2fd; font-weight: bold; padding: 2px 6px; border-radius: 0 4px 4px 0;',
 );

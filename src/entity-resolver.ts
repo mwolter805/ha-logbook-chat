@@ -242,8 +242,9 @@ function getContactPrefix(entity: HassEntity): string | null {
 /**
  * Search hass.states for a binary_sensor matching the channel pattern.
  * Uses dynamic discovery: looks for entities ending in _ch_{idx}_messages.
+ * Exported so the main card can detect mid-session _messages entity appearance.
  */
-function discoverChannelEntity(
+export function discoverChannelEntity(
   hass: HomeAssistant,
   config: CardConfig,
   channelIdx: number,
@@ -314,12 +315,72 @@ export function discoverContactEntity(
 
 /**
  * Discover available channels from hass states for builtin mode.
+ *
+ * For MeshCore preset: reads from select.meshcore_channel options, which contains
+ * ALL configured channels immediately. Cross-references _messages entities for those
+ * that have message history.
+ *
+ * Legacy fallback: scans hass states for _messages entities (old behavior).
  */
 export function discoverChannels(
   hass: HomeAssistant,
   config: CardConfig,
-): Array<{ name: string; idx: number; entityId: string }> {
-  const channels: Array<{ name: string; idx: number; entityId: string }> = [];
+): Array<{ name: string; idx: number; entityId: string | null }> {
+  // Try select-based discovery first (MeshCore preset)
+  const selectChannels = discoverChannelsFromSelect(hass, config);
+  if (selectChannels !== null) {
+    return selectChannels;
+  }
+
+  // Legacy fallback: scan for _messages entities
+  return discoverChannelsLegacy(hass, config);
+}
+
+/**
+ * Discover channels from select.meshcore_channel options.
+ * Returns null if the select entity doesn't exist (legacy fallback needed).
+ */
+function discoverChannelsFromSelect(
+  hass: HomeAssistant,
+  config: CardConfig,
+): Array<{ name: string; idx: number; entityId: string | null }> | null {
+  const selectEntityId = config.channel_entity;
+  if (!selectEntityId) return null;
+
+  const selectEntity = hass.states[selectEntityId];
+  if (!selectEntity) return null;
+
+  const options = selectEntity.attributes['options'] as string[] | undefined;
+  if (!options || options.length === 0) return null;
+
+  const channels: Array<{ name: string; idx: number; entityId: string | null }> = [];
+  const idxRegex = /\((\d+)\)\s*$/;
+
+  for (const option of options) {
+    const match = option.match(idxRegex);
+    if (!match) continue; // Skip non-channel options
+
+    const idx = parseInt(match[1], 10);
+    const name = option.replace(/\s*\(\d+\)\s*$/, '').trim() || `Channel ${idx}`;
+
+    // Cross-reference: try to find a _messages entity for this channel
+    const entityId = discoverChannelEntity(hass, config, idx);
+
+    channels.push({ name, idx, entityId });
+  }
+
+  return channels.sort((a, b) => a.idx - b.idx);
+}
+
+/**
+ * Legacy channel discovery: scan hass states for _messages entities.
+ * Only finds channels that have received at least one message.
+ */
+function discoverChannelsLegacy(
+  hass: HomeAssistant,
+  config: CardConfig,
+): Array<{ name: string; idx: number; entityId: string | null }> {
+  const channels: Array<{ name: string; idx: number; entityId: string | null }> = [];
   const channelRegex = /_ch_(\d+)_messages$/;
   const prefixFilter = config.node_prefix ? `_${config.node_prefix}_` : '';
 
