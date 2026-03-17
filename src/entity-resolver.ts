@@ -57,7 +57,13 @@ export function resolveEntity(hass: HomeAssistant, config: CardConfig): Resolved
       // The main card component manages the builtin state and passes the resolved values
       return resolveExternal(hass, config);
     default:
-      return { entityId: null, recipientType: null, label: '', error: `Unknown mode: ${mode}`, contactPrefix: null };
+      return {
+        entityId: null,
+        recipientType: null,
+        label: '',
+        error: `Unknown mode: ${mode}`,
+        contactPrefix: null,
+      };
   }
 }
 
@@ -191,11 +197,11 @@ function resolveContact(hass: HomeAssistant, config: CardConfig): ResolvedEntity
   // this is NOT an error — it just means no messages have been exchanged yet.
   // The card can still send messages using the pubkey prefix.
   return {
-    entityId,          // null if no message history yet — that's OK
+    entityId, // null if no message history yet — that's OK
     recipientType: 'contact',
     label: contactName,
-    error: null,       // no error — contact is valid
-    contactPrefix,     // always populated for contacts
+    error: null, // no error — contact is valid
+    contactPrefix, // always populated for contacts
   };
 }
 
@@ -408,10 +414,7 @@ function discoverChannelsLegacy(
  *
  * Legacy fallback: scans hass states for _messages entities (old behavior).
  */
-export function discoverContacts(
-  hass: HomeAssistant,
-  config: CardConfig,
-): BuiltinContact[] {
+export function discoverContacts(hass: HomeAssistant, config: CardConfig): BuiltinContact[] {
   // Try select-based discovery first (MeshCore preset)
   const selectContacts = discoverContactsFromSelect(hass, config);
   if (selectContacts !== null) {
@@ -464,10 +467,7 @@ function discoverContactsFromSelect(
  * Legacy contact discovery: scan hass states for _messages entities.
  * Only finds contacts that have exchanged at least one message.
  */
-function discoverContactsLegacy(
-  hass: HomeAssistant,
-  config: CardConfig,
-): BuiltinContact[] {
+function discoverContactsLegacy(hass: HomeAssistant, config: CardConfig): BuiltinContact[] {
   const contacts: BuiltinContact[] = [];
   const prefixFilter = config.node_prefix ? `_${config.node_prefix}_` : '';
   // Contact entities end with _messages but NOT _ch_N_messages and NOT _rx_messages

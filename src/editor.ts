@@ -177,7 +177,9 @@ export class HaLogbookChatEditor extends LitElement {
             max="48"
           />
         </div>
-        <div class="hint">Hours to fetch on first load (expands to 3x then 6x if needed, scroll for more)</div>
+        <div class="hint">
+          Hours to fetch on first load (expands to 3x then 6x if needed, scroll for more)
+        </div>
         <div class="row">
           <label>Max Messages</label>
           <input
