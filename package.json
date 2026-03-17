@@ -1,6 +1,6 @@
 {
   "name": "ha-logbook-chat",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "A Home Assistant custom Lovelace card that renders logbook messages as a modern chat interface",
   "main": "dist/ha-logbook-chat.js",
   "scripts": {

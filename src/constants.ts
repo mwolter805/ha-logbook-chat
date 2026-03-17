@@ -26,6 +26,7 @@ export const MENTION_WORD_REGEX = /@(\w+)/g;
 export const DEFAULT_CONFIG: Partial<CardConfig> = {
   mode: 'external',
   hours_to_show: 48,
+  initial_hours: 1,
   max_messages: 500,
   show_search: false,
   show_date_separators: true,
@@ -80,6 +81,7 @@ export const KNOWN_CONFIG_KEYS = new Set<string>([
   'entity',
   'domain_filter',
   'hours_to_show',
+  'initial_hours',
   'max_messages',
   'show_search',
   'show_date_separators',
@@ -120,12 +122,12 @@ export const FETCH_MAX_RETRIES = 5;
 /**
  * Lazy loading configuration
  */
-/** Initial time window in hours for first fetch (expand if too few messages) */
-export const LAZY_LOAD_INITIAL_HOURS = 6;
+/** Default initial time window in hours — overridden by config.initial_hours */
+export const LAZY_LOAD_INITIAL_HOURS = 1;
 /** Hours to go back for each "load older" batch */
 export const LAZY_LOAD_BATCH_HOURS = 6;
 /** Minimum messages before stopping adaptive expansion on initial load */
-export const LAZY_LOAD_MIN_MESSAGES = 100;
+export const LAZY_LOAD_MIN_MESSAGES = 20;
 /** Pixels from top of scroll container to trigger loading older messages */
 export const LAZY_LOAD_SCROLL_THRESHOLD = 200;
 

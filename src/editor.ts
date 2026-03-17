@@ -164,6 +164,21 @@ export class HaLogbookChatEditor extends LitElement {
           />
         </div>
         <div class="row">
+          <label>Initial Load Hours</label>
+          <input
+            type="number"
+            .value=${String(this._config.initial_hours ?? DEFAULT_CONFIG.initial_hours)}
+            @input=${(e: Event) =>
+              this._updateConfig(
+                'initial_hours',
+                parseInt((e.target as HTMLInputElement).value, 10),
+              )}
+            min="1"
+            max="48"
+          />
+        </div>
+        <div class="hint">Hours to fetch on first load (expands to 3x then 6x if needed, scroll for more)</div>
+        <div class="row">
           <label>Max Messages</label>
           <input
             type="number"

@@ -5,7 +5,6 @@ import {
   CACHE_VERSION,
   FETCH_MAX_RETRIES,
   LAZY_LOAD_INITIAL_HOURS,
-  LAZY_LOAD_BATCH_HOURS,
   LAZY_LOAD_MIN_MESSAGES,
   INCREMENTAL_OVERLAP_S,
 } from './constants';
@@ -203,23 +202,33 @@ export class MessageStore {
       const absoluteOldest = new Date();
       absoluteOldest.setHours(absoluteOldest.getHours() - hoursToShow);
 
-      // End time is the oldest message currently displayed.
-      // We always use the actual oldest message timestamp (not _oldestLoadedTime)
-      // because max_messages truncation may have removed older messages from the set,
-      // making _oldestLoadedTime point to a range we already fetched but discarded.
+      // End time: use whichever is older — the oldest displayed message or
+      // _oldestLoadedTime. This prevents re-scanning the same empty gap when
+      // a previous batch returned 0 results (message history has gaps).
       let endTime: string;
-      if (this._messages.length > 0) {
-        endTime = this._messages[0].timestamp.toISOString();
+      const oldestMsgTime =
+        this._messages.length > 0 ? this._messages[0].timestamp.toISOString() : null;
+
+      if (oldestMsgTime && this._oldestLoadedTime) {
+        // Use whichever is further back in time
+        endTime = oldestMsgTime < this._oldestLoadedTime ? oldestMsgTime : this._oldestLoadedTime;
+      } else if (oldestMsgTime) {
+        endTime = oldestMsgTime;
       } else if (this._oldestLoadedTime) {
         endTime = this._oldestLoadedTime;
       } else {
         endTime = new Date().toISOString();
       }
 
-      // Start time is BATCH_HOURS before the end time
+      // Batch size scales with initial_hours to keep lazy-load responses fast
+      // on active channels (e.g., initial_hours=1 → batch=3h instead of 6h)
+      const initHours = this._config.initial_hours ?? LAZY_LOAD_INITIAL_HOURS;
+      const batchHours = Math.max(initHours * 3, LAZY_LOAD_INITIAL_HOURS);
+
+      // Start time is batchHours before the end time
       const endDate = new Date(endTime);
       const startDate = new Date(endDate);
-      startDate.setHours(startDate.getHours() - LAZY_LOAD_BATCH_HOURS);
+      startDate.setHours(startDate.getHours() - batchHours);
 
       // Clamp to the absolute oldest allowed
       if (startDate.getTime() <= absoluteOldest.getTime()) {
@@ -346,23 +355,24 @@ export class MessageStore {
           domain_filter: this._config.domain_filter,
         });
       } else {
-        // Initial/full fetch — use adaptive time window expansion
+        // Initial/full fetch — fast first paint with progressive expansion.
+        // Steps: initial_hours → 3x initial_hours → 6x initial_hours.
+        // Stops early if enough messages found. Older history is lazy-loaded on scroll.
         const maxMessages = this._config.max_messages ?? 500;
         const targetMin = Math.min(LAZY_LOAD_MIN_MESSAGES, maxMessages);
+        const initHours = this._config.initial_hours ?? LAZY_LOAD_INITIAL_HOURS;
         const expansionSteps = [
-          LAZY_LOAD_INITIAL_HOURS,
-          LAZY_LOAD_INITIAL_HOURS * 2,
-          LAZY_LOAD_INITIAL_HOURS * 4,
-          hoursToShow,
+          initHours,
+          initHours * 3,
+          initHours * 6,
         ].filter((h) => h <= hoursToShow);
-        if (expansionSteps[expansionSteps.length - 1] !== hoursToShow) {
-          expansionSteps.push(hoursToShow);
-        }
+        // Deduplicate in case rounding produces identical steps
+        const uniqueSteps = [...new Set(expansionSteps)];
 
         parsed = [];
         let usedHours = 0;
 
-        for (const hours of expansionSteps) {
+        for (const hours of uniqueSteps) {
           const start = new Date();
           start.setHours(start.getHours() - hours);
           const startTime = start.toISOString();
@@ -375,7 +385,7 @@ export class MessageStore {
           });
           usedHours = hours;
 
-          if (parsed.length >= targetMin || hours >= hoursToShow) {
+          if (parsed.length >= targetMin) {
             break;
           }
         }
@@ -384,7 +394,9 @@ export class MessageStore {
         const oldestStart = new Date();
         oldestStart.setHours(oldestStart.getHours() - usedHours);
         this._oldestLoadedTime = oldestStart.toISOString();
-        this._hasOlderMessages = usedHours < hoursToShow;
+        // Always enable lazy loading — initial fetch is intentionally small for fast load.
+        // Full hours_to_show range is accessible via scroll-up lazy loading.
+        this._hasOlderMessages = true;
         this._initialFetchDone = true;
       }
 

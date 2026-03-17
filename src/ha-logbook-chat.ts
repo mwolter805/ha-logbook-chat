@@ -401,7 +401,30 @@ export class HaLogbookChat extends LitElement {
             this._initialScrollDone = true;
           });
         }
+        // Auto-trigger lazy load when content doesn't fill the container.
+        // If the user can't scroll, the scroll event never fires, so we
+        // must detect this condition and load more history automatically.
+        this._autoLoadIfUnderflow();
       });
+    }
+  }
+
+  /**
+   * If the chat content doesn't fill the container (no scrollbar),
+   * the user can't scroll up to trigger lazy loading. Detect this
+   * and automatically load older messages until the container is
+   * scrollable or there's nothing left to load.
+   */
+  private _autoLoadIfUnderflow(): void {
+    const container = this._chatContainer ?? this.shadowRoot?.querySelector('.chat-container');
+    if (!container) return;
+    if (!this._store || this._store.loadingOlder || !this._store.hasOlderMessages) return;
+    // Only auto-load if we have some messages already (avoids loop on empty channels)
+    if (this._store.messages.length === 0) return;
+
+    // Content doesn't overflow → user can't scroll → auto-trigger lazy load
+    if (container.scrollHeight <= container.clientHeight) {
+      this._store.loadOlderMessages();
     }
   }
 
@@ -1104,7 +1127,7 @@ window.customCards.push({
 });
 
 console.info(
-  `%c  HA-LOGBOOK-CHAT  %c v1.3.0 `,
+  `%c  HA-LOGBOOK-CHAT  %c v1.4.0 `,
   'color: white; background: #03a9f4; font-weight: bold; padding: 2px 6px; border-radius: 4px 0 0 4px;',
   'color: #03a9f4; background: #e3f2fd; font-weight: bold; padding: 2px 6px; border-radius: 0 4px 4px 0;',
 );

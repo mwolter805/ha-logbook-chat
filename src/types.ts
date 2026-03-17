@@ -177,6 +177,9 @@ export interface CardConfig {
   // === Display ===
   /** Hours of history to fetch (default: 48) */
   hours_to_show?: number;
+  /** Initial hours to load on first render for fast first paint (default: 1).
+   *  Expansion: initial_hours → 3x → 6x, then lazy-load on scroll. */
+  initial_hours?: number;
   /** Max messages to display (default: 500) */
   max_messages?: number;
   /** Show search/filter bar (default: false) */
