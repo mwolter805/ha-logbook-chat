@@ -59,7 +59,8 @@ export class HaLogbookChat extends LitElement {
 
   // Builtin mode state
   @state() private _builtinType: 'channel' | 'contact' = 'channel';
-  @state() private _builtinChannels: Array<{ name: string; idx: number; entityId: string | null }> = [];
+  @state() private _builtinChannels: Array<{ name: string; idx: number; entityId: string | null }> =
+    [];
   @state() private _builtinContacts: BuiltinContact[] = [];
   @state() private _builtinSelectedChannel = 0;
   @state() private _builtinSelectedContact = '';
@@ -291,7 +292,13 @@ export class HaLogbookChat extends LitElement {
 
   private _resolveBuiltin(): ResolvedEntity {
     if (!this.hass) {
-      return { entityId: null, recipientType: null, label: '', error: 'No hass', contactPrefix: null };
+      return {
+        entityId: null,
+        recipientType: null,
+        label: '',
+        error: 'No hass',
+        contactPrefix: null,
+      };
     }
 
     if (this._builtinType === 'channel') {
@@ -316,12 +323,18 @@ export class HaLogbookChat extends LitElement {
           contactPrefix: null,
         };
       }
-      return { entityId: null, recipientType: 'channel', label: 'No channels found', error: null, contactPrefix: null };
+      return {
+        entityId: null,
+        recipientType: 'channel',
+        label: 'No channels found',
+        error: null,
+        contactPrefix: null,
+      };
     } else {
       const contact = this._builtinContacts.find((c) => c.prefix === this._builtinSelectedContact);
       if (contact) {
         return {
-          entityId: contact.entityId,  // null if no message history yet
+          entityId: contact.entityId, // null if no message history yet
           recipientType: 'contact',
           label: contact.name,
           error: null,
@@ -359,8 +372,7 @@ export class HaLogbookChat extends LitElement {
     // We deliberately do NOT check message count here because lazy-loading
     // older messages increases the count without adding anything new at the
     // bottom, which would incorrectly trigger the badge.
-    const hasNewContent =
-      messages.length > 0 && messages[messages.length - 1].id !== prevMsgId;
+    const hasNewContent = messages.length > 0 && messages[messages.length - 1].id !== prevMsgId;
     if (this._initialScrollDone && this._userScrolledUp && hasNewContent) {
       this._hasNewMessages = true;
     }
@@ -707,9 +719,7 @@ export class HaLogbookChat extends LitElement {
       <div class="input-area" part="input-area">
         <textarea
           rows="1"
-          placeholder=${canSend
-            ? 'Type a message...'
-            : 'Select a channel or contact'}
+          placeholder=${canSend ? 'Type a message...' : 'Select a channel or contact'}
           .value=${this._inputText}
           ?disabled=${disabled}
           @input=${this._onInputChange}
@@ -961,9 +971,7 @@ export class HaLogbookChat extends LitElement {
 
       if (channelIdx === null) return false;
 
-      console.debug(
-        `[ha-logbook-chat] Direct send: meshcore.send_channel_message ch=${channelIdx}`,
-      );
+      console.info(`[ha-logbook-chat] Direct send: meshcore.send_channel_message ch=${channelIdx}`);
 
       await this.hass.callService('meshcore', 'send_channel_message', {
         channel_idx: channelIdx,
@@ -982,7 +990,7 @@ export class HaLogbookChat extends LitElement {
         if (!ctMatch) return false;
         const legacyPrefix = ctMatch[1];
 
-        console.debug(
+        console.info(
           `[ha-logbook-chat] Direct send (legacy): meshcore.send_message prefix=${legacyPrefix}`,
         );
 
@@ -993,9 +1001,7 @@ export class HaLogbookChat extends LitElement {
         return true;
       }
 
-      console.debug(
-        `[ha-logbook-chat] Direct send: meshcore.send_message prefix=${pubkeyPrefix}`,
-      );
+      console.info(`[ha-logbook-chat] Direct send: meshcore.send_message prefix=${pubkeyPrefix}`);
 
       await this.hass.callService('meshcore', 'send_message', {
         pubkey_prefix: pubkeyPrefix,
@@ -1034,7 +1040,11 @@ export class HaLogbookChat extends LitElement {
     }
 
     // Sync channel or contact select based on the resolved entity ID
-    if (this._resolved.recipientType === 'channel' && this._config.channel_entity && this._resolved.entityId) {
+    if (
+      this._resolved.recipientType === 'channel' &&
+      this._config.channel_entity &&
+      this._resolved.entityId
+    ) {
       // Extract channel index from the resolved entity_id (e.g., binary_sensor.*_ch_1_messages → 1)
       const chMatch = this._resolved.entityId.match(/_ch_(\d+)_messages$/);
       if (chMatch) {

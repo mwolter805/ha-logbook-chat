@@ -1,4 +1,11 @@
-import type { CardConfig, ChatMessage, HomeAssistant, LogbookEntry, CacheEntry } from './types';
+import type {
+  CardConfig,
+  ChatMessage,
+  HomeAssistant,
+  HassEvent,
+  LogbookEntry,
+  CacheEntry,
+} from './types';
 import { parseLogbookEntries } from './message-parser';
 import {
   CACHE_KEY_PREFIX,
@@ -361,11 +368,9 @@ export class MessageStore {
         const maxMessages = this._config.max_messages ?? 500;
         const targetMin = Math.min(LAZY_LOAD_MIN_MESSAGES, maxMessages);
         const initHours = this._config.initial_hours ?? LAZY_LOAD_INITIAL_HOURS;
-        const expansionSteps = [
-          initHours,
-          initHours * 3,
-          initHours * 6,
-        ].filter((h) => h <= hoursToShow);
+        const expansionSteps = [initHours, initHours * 3, initHours * 6].filter(
+          (h) => h <= hoursToShow,
+        );
         // Deduplicate in case rounding produces identical steps
         const uniqueSteps = [...new Set(expansionSteps)];
 
@@ -474,7 +479,7 @@ export class MessageStore {
       const safeFetch = () => this._fetchMessages(entityId, false).catch(() => {});
 
       // 1. state_changed — standard HA pattern
-      const unsubState = await this._hass.connection.subscribeEvents((event: any) => {
+      const unsubState = await this._hass.connection.subscribeEvents((event: HassEvent) => {
         if (event.data.entity_id === entityId && event.data.new_state) {
           safeFetch();
         }
@@ -483,7 +488,7 @@ export class MessageStore {
 
       // 2. meshcore_message — fires BEFORE logbook entry is written,
       //    so we delay to let the logbook pipeline complete.
-      const unsubMeshcore = await this._hass.connection.subscribeEvents((event: any) => {
+      const unsubMeshcore = await this._hass.connection.subscribeEvents((event: HassEvent) => {
         const d = event.data;
         if (d.entity_id === entityId) {
           // First fetch after 500ms
