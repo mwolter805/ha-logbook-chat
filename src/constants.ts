@@ -9,7 +9,7 @@ export const EDITOR_TAG = 'ha-logbook-chat-editor';
 /**
  * Cache constants
  */
-export const CACHE_VERSION = 1;
+export const CACHE_VERSION = 2;
 export const CACHE_KEY_PREFIX = 'ha-logbook-chat:';
 
 /**
@@ -19,6 +19,9 @@ export const CHANNEL_PREFIX_REGEX = /^<[^>]+>\s*/;
 export const SENDER_SPLIT_REGEX = /: /;
 export const MENTION_BRACKET_REGEX = /@\[([^\]]+)\]/g;
 export const MENTION_WORD_REGEX = /@(\w+)/g;
+/** Matches the [route:xx,xx,...] tag appended to MeshCore received messages.
+ *  Captures the route value (hex node IDs) inside the brackets. */
+export const ROUTE_TAG_REGEX = /\s*\[route:([^\]]*)\]/;
 
 /**
  * Default config values

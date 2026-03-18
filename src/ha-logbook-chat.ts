@@ -52,6 +52,7 @@ export class HaLogbookChat extends LitElement {
   @state() private _error: string | null = null;
   @state() private _searchQuery = '';
   @state() private _showCopiedToast = false;
+  @state() private _dialogMessage: ChatMessage | null = null;
   @state() private _hasNewMessages = false;
   @state() private _inputText = '';
   @state() private _sending = false;
@@ -448,7 +449,8 @@ export class HaLogbookChat extends LitElement {
     return html`
       <ha-card>
         ${this._renderHeader()} ${this._renderSearchBar()} ${this._renderEntitySelector()}
-        ${this._renderChatArea()} ${this._renderInputArea()} ${this._renderCopiedToast()}
+        ${this._renderChatArea()} ${this._renderInputArea()} ${this._renderMessageDialog()}
+        ${this._renderCopiedToast()}
       </ha-card>
     `;
   }
@@ -642,9 +644,9 @@ export class HaLogbookChat extends LitElement {
               role="article"
               tabindex="0"
               aria-label="${msg.isSystem ? msg.text : `${msg.sender}: ${msg.text}`}"
-              @click=${() => this._copyMessage(msg)}
+              @click=${() => this._openMessageDialog(msg)}
               @keydown=${(e: KeyboardEvent) => {
-                if (e.key === 'Enter') this._copyMessage(msg);
+                if (e.key === 'Enter') this._openMessageDialog(msg);
               }}
             >
               <span class="message-text" part="message-text">${this._renderMessageText(msg)}</span>
@@ -739,6 +741,43 @@ export class HaLogbookChat extends LitElement {
     `;
   }
 
+  private _renderMessageDialog(): TemplateResult | typeof nothing {
+    const msg = this._dialogMessage;
+    if (!msg) return nothing;
+
+    const previewText = msg.text.length > 60 ? msg.text.substring(0, 57) + '...' : msg.text;
+    const showReply = this._config.show_input && !msg.isOutgoing && !msg.isSystem;
+
+    return html`
+      <div
+        class="message-dialog-overlay"
+        @click=${this._closeMessageDialog}
+        @keydown=${(e: KeyboardEvent) => {
+          if (e.key === 'Escape') this._closeMessageDialog();
+        }}
+      >
+        <div class="message-dialog" @click=${(e: Event) => e.stopPropagation()}>
+          <div class="message-dialog-preview">${previewText}</div>
+          ${showReply
+            ? html`<button class="message-dialog-action" @click=${this._dialogReply}>
+                Reply to ${msg.sender}
+              </button>`
+            : nothing}
+          <button class="message-dialog-action" @click=${this._dialogCopy}>Copy message</button>
+          ${msg.route
+            ? html`<div
+                class="message-dialog-route"
+                @click=${this._dialogCopyRoute}
+                title="Tap to copy route"
+              >
+                Route: ${msg.route}
+              </div>`
+            : nothing}
+        </div>
+      </div>
+    `;
+  }
+
   private _renderCopiedToast(): TemplateResult {
     return html`
       <div class="copied-toast ${this._showCopiedToast ? 'visible' : ''}">Copied!</div>
@@ -801,24 +840,62 @@ export class HaLogbookChat extends LitElement {
     });
   }
 
-  private async _copyMessage(msg: ChatMessage): Promise<void> {
+  // === Message Dialog ===
+
+  private _openMessageDialog(msg: ChatMessage): void {
     if (msg.isSystem) return;
+    this._dialogMessage = msg;
+  }
+
+  private _closeMessageDialog(): void {
+    this._dialogMessage = null;
+  }
+
+  private _dialogReply(): void {
+    const msg = this._dialogMessage;
+    if (!msg) return;
+    this._inputText = `@[${msg.sender}] `;
+    this._closeMessageDialog();
+    // Focus the textarea after Lit re-renders
+    this.updateComplete.then(() => {
+      const textarea = this.shadowRoot?.querySelector(
+        '.input-area textarea',
+      ) as HTMLTextAreaElement;
+      if (textarea) {
+        textarea.focus();
+        // Place cursor at end of prepopulated text
+        textarea.setSelectionRange(this._inputText.length, this._inputText.length);
+      }
+    });
+  }
+
+  private _dialogCopy(): void {
+    const msg = this._dialogMessage;
+    if (!msg) return;
+    this._copyToClipboard(msg.text);
+    this._closeMessageDialog();
+  }
+
+  private _dialogCopyRoute(): void {
+    const msg = this._dialogMessage;
+    if (!msg?.route) return;
+    this._copyToClipboard(msg.route);
+  }
+
+  private async _copyToClipboard(text: string): Promise<void> {
     try {
-      // Try modern Clipboard API first
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(msg.text);
+        await navigator.clipboard.writeText(text);
       } else {
-        // Fallback for contexts where Clipboard API is unavailable
-        this._copyFallback(msg.text);
+        this._copyFallback(text);
       }
       this._showCopiedToast = true;
       setTimeout(() => {
         this._showCopiedToast = false;
       }, 1500);
     } catch {
-      // Clipboard API denied (e.g. non-secure context, iframe restrictions) — use fallback
       try {
-        this._copyFallback(msg.text);
+        this._copyFallback(text);
         this._showCopiedToast = true;
         setTimeout(() => {
           this._showCopiedToast = false;
@@ -1137,7 +1214,7 @@ window.customCards.push({
 });
 
 console.info(
-  `%c  HA-LOGBOOK-CHAT  %c v1.4.0 `,
+  `%c  HA-LOGBOOK-CHAT  %c v1.5.0 `,
   'color: white; background: #03a9f4; font-weight: bold; padding: 2px 6px; border-radius: 4px 0 0 4px;',
   'color: #03a9f4; background: #e3f2fd; font-weight: bold; padding: 2px 6px; border-radius: 0 4px 4px 0;',
 );

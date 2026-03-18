@@ -498,6 +498,84 @@ export const cardStyles = css`
     opacity: 0.9;
   }
 
+  /* === Message Dialog === */
+  .message-dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .message-dialog {
+    background: #333;
+    border: 2px solid var(--primary-color, #03a9f4);
+    border-radius: 12px;
+    box-shadow: 0 0 20px rgba(var(--rgb-primary-color, 3, 169, 244), 0.3);
+    min-width: 240px;
+    max-width: 300px;
+    overflow: hidden;
+    z-index: 21;
+  }
+
+  .message-dialog-preview {
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--secondary-text-color);
+    border-bottom: 1px solid var(--divider-color, #e0e0e0);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 280px;
+  }
+
+  .message-dialog-action {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 14px 16px;
+    border: none;
+    background: transparent;
+    color: var(--primary-text-color);
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+    min-height: 48px;
+    transition: background 0.15s;
+  }
+
+  .message-dialog-action:hover,
+  .message-dialog-action:active {
+    background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.15);
+  }
+
+  .message-dialog-action + .message-dialog-action {
+    border-top: 1px solid var(--divider-color, #e0e0e0);
+  }
+
+  .message-dialog-route {
+    padding: 12px 16px;
+    font-size: 12px;
+    color: var(--secondary-text-color);
+    border-top: 1px solid var(--divider-color, #e0e0e0);
+    cursor: pointer;
+    font-family: monospace;
+    word-break: break-all;
+    transition: background 0.15s;
+  }
+
+  .message-dialog-route:hover,
+  .message-dialog-route:active {
+    background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.15);
+  }
+
   /* === Accessibility === */
   .bubble:focus-visible {
     outline: 2px solid var(--primary-color);

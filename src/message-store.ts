@@ -186,6 +186,7 @@ export class MessageStore {
       isSystem: false,
       raw: `${sender}: ${text}`,
       mentions: [],
+      route: null,
     };
 
     this._messages = [...this._messages, msg];

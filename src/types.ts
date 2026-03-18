@@ -83,6 +83,8 @@ export interface ChatMessage {
   raw: string;
   /** Extracted @[Name] and @Name mentions */
   mentions: string[];
+  /** Route hex path stripped from the [route:...] tag, or null if no route tag */
+  route: string | null;
 }
 
 /**

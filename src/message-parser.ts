@@ -1,5 +1,10 @@
 import type { CardConfig, ChatMessage, LogbookEntry, MessageGroup, RenderItem } from './types';
-import { CHANNEL_PREFIX_REGEX, MENTION_BRACKET_REGEX, MENTION_WORD_REGEX } from './constants';
+import {
+  CHANNEL_PREFIX_REGEX,
+  MENTION_BRACKET_REGEX,
+  MENTION_WORD_REGEX,
+  ROUTE_TAG_REGEX,
+} from './constants';
 
 /**
  * Generate a simple deterministic ID for a message.
@@ -116,8 +121,17 @@ export function parseLogbookEntry(
         isSystem: true,
         raw,
         mentions: extractMentions(stripped),
+        route: null,
       };
     }
+  }
+
+  // Step 2.5: Extract and strip [route:...] tag
+  let route: string | null = null;
+  const routeMatch = text.match(ROUTE_TAG_REGEX);
+  if (routeMatch) {
+    route = routeMatch[1]; // captured group = hex route value
+    text = text.replace(ROUTE_TAG_REGEX, '').trimEnd();
   }
 
   // Step 3: Determine outgoing status
@@ -135,6 +149,7 @@ export function parseLogbookEntry(
     isSystem: false,
     raw,
     mentions,
+    route,
   };
 }
 
