@@ -279,6 +279,13 @@ export const cardStyles = css`
     border-radius: 4px;
   }
 
+  /* Mentions inside outgoing bubbles need contrasting colors —
+     the default mention color is the same blue as the bubble background */
+  .bubble.outgoing .message-text .mention {
+    background: rgba(255, 255, 255, 0.25);
+    color: #fff;
+  }
+
   /* === Timestamp === */
   .timestamp {
     font-size: 11px;

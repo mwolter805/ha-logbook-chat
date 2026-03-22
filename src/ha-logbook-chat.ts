@@ -78,6 +78,8 @@ export class HaLogbookChat extends LitElement {
   private _lastKnownMsgId: string | null = null;
   // Scroll preservation for lazy-load prepend
   private _scrollHeightBeforeUpdate: number | null = null;
+  // Tracked timers — cleaned up on disconnect to prevent leaks
+  private _pendingTimers: Set<ReturnType<typeof setTimeout>> = new Set();
 
   // HA card API
   static getConfigElement(): HTMLElement {
@@ -170,6 +172,11 @@ export class HaLogbookChat extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._debounceTimer) clearTimeout(this._debounceTimer);
+    // Cancel all tracked timers (post-send refreshes, toast hide, etc.)
+    for (const id of this._pendingTimers) {
+      clearTimeout(id);
+    }
+    this._pendingTimers.clear();
     this._store?.pause();
   }
 
@@ -890,20 +897,29 @@ export class HaLogbookChat extends LitElement {
         this._copyFallback(text);
       }
       this._showCopiedToast = true;
-      setTimeout(() => {
+      this._trackedTimeout(() => {
         this._showCopiedToast = false;
       }, 1500);
     } catch {
       try {
         this._copyFallback(text);
         this._showCopiedToast = true;
-        setTimeout(() => {
+        this._trackedTimeout(() => {
           this._showCopiedToast = false;
         }, 1500);
       } catch {
         // Truly unavailable
       }
     }
+  }
+
+  /** Create a setTimeout that is tracked and cancelled on disconnect to prevent leaks. */
+  private _trackedTimeout(fn: () => void, ms: number): void {
+    const id = setTimeout(() => {
+      this._pendingTimers.delete(id);
+      fn();
+    }, ms);
+    this._pendingTimers.add(id);
   }
 
   private _copyFallback(text: string): void {
@@ -1004,9 +1020,9 @@ export class HaLogbookChat extends LitElement {
         this._store.refresh();
         this._userScrolledUp = false;
       };
-      setTimeout(refreshAndScroll, 2000);
-      setTimeout(refreshAndScroll, 5000);
-      setTimeout(refreshAndScroll, 10000);
+      this._trackedTimeout(() => refreshAndScroll(), 2000);
+      this._trackedTimeout(() => refreshAndScroll(), 5000);
+      this._trackedTimeout(() => refreshAndScroll(), 10000);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[ha-logbook-chat] Send failed:', err);

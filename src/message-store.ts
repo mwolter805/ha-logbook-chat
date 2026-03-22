@@ -31,6 +31,8 @@ export class MessageStore {
   private _hass: HomeAssistant | null = null;
   private _pollTimer: ReturnType<typeof setTimeout> | null = null;
   private _unsubscribe: (() => void) | null = null;
+  /** Tracked pending timers (WebSocket delayed fetches, etc.) — cleared on _stopUpdates */
+  private _pendingTimers: Set<ReturnType<typeof setTimeout>> = new Set();
   private _retryCount = 0;
   private _onChange: (() => void) | null = null;
   private _lastFetchTimestamp: string | null = null;
@@ -479,6 +481,15 @@ export class MessageStore {
       // Helper: fire-and-forget fetch that swallows unexpected errors
       const safeFetch = () => this._fetchMessages(entityId, false).catch(() => {});
 
+      // Helper: tracked setTimeout — automatically removed from set when it fires
+      const trackedTimeout = (fn: () => void, ms: number) => {
+        const id = setTimeout(() => {
+          this._pendingTimers.delete(id);
+          fn();
+        }, ms);
+        this._pendingTimers.add(id);
+      };
+
       // 1. state_changed — standard HA pattern
       const unsubState = await this._hass.connection.subscribeEvents((event: HassEvent) => {
         if (event.data.entity_id === entityId && event.data.new_state) {
@@ -493,9 +504,9 @@ export class MessageStore {
         const d = event.data;
         if (d.entity_id === entityId) {
           // First fetch after 500ms
-          setTimeout(() => safeFetch(), 500);
+          trackedTimeout(() => safeFetch(), 500);
           // Safety net after 2s
-          setTimeout(() => safeFetch(), 2000);
+          trackedTimeout(() => safeFetch(), 2000);
         }
       }, 'meshcore_message');
       unsubs.push(unsubMeshcore);
@@ -559,6 +570,11 @@ export class MessageStore {
       this._unsubscribe();
       this._unsubscribe = null;
     }
+    // Cancel all pending tracked timers (WebSocket delayed fetches, etc.)
+    for (const id of this._pendingTimers) {
+      clearTimeout(id);
+    }
+    this._pendingTimers.clear();
   }
 
   /**
