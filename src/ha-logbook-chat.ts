@@ -1230,7 +1230,7 @@ window.customCards.push({
 });
 
 console.info(
-  `%c  HA-LOGBOOK-CHAT  %c v1.5.0 `,
+  `%c  HA-LOGBOOK-CHAT  %c v1.5.1 `,
   'color: white; background: #03a9f4; font-weight: bold; padding: 2px 6px; border-radius: 4px 0 0 4px;',
   'color: #03a9f4; background: #e3f2fd; font-weight: bold; padding: 2px 6px; border-radius: 0 4px 4px 0;',
 );
